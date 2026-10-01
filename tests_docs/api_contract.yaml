@@ -1,0 +1,434 @@
+openapi: 3.0.3
+
+info:
+  title: RideSmart API
+  version: "0.1.0"
+  description: >
+    AI-Based Smart Public Transportation Platform.
+    Real-time bus tracking, ETA prediction and crowd-aware route planning.
+
+    OWNER: Member 2 (database/ - FastAPI application).
+    CONTRACT OWNER: Member 5 (tests_docs/). Treat this file as the source of
+    truth. If the code and this file disagree, that is a bug.
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+tags:
+  - name: meta
+  - name: routes
+  - name: tracking
+  - name: planning
+  - name: authority
+
+paths:
+  /api/health:
+    get:
+      tags: [meta]
+      summary: Service health check
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  database: { type: string, example: ok }
+                  time: { type: string, format: date-time }
+
+  /api/routes:
+    get:
+      tags: [routes]
+      summary: List every route
+      responses:
+        "200":
+          description: All routes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Route" }
+
+  /api/routes/{route_id}/stops:
+    get:
+      tags: [routes]
+      summary: Ordered stops for a route
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Stops in travel order
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RouteStop" }
+        "404":
+          description: Route not found
+
+  /api/stops:
+    get:
+      tags: [routes]
+      summary: List every stop (used by the planner's from/to pickers)
+      responses:
+        "200":
+          description: All stops
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Stop" }
+
+  /api/buses/active:
+    get:
+      tags: [tracking]
+      summary: Latest known position of every active bus
+      description: >
+        Returns one entry per active trip. Frontend polls this every 2 seconds
+        as a fallback if the WebSocket is unavailable.
+      responses:
+        "200":
+          description: Active buses
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BusPosition" }
+
+  /api/buses/{bus_id}/location:
+    get:
+      tags: [tracking]
+      summary: Latest position of one bus
+      parameters:
+        - name: bus_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Latest position
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusPosition" }
+        "404":
+          description: Bus not found
+
+  /api/routes/plan:
+    post:
+      tags: [planning]
+      summary: Plan a journey - the crowd-aware route planner
+      description: >
+        THE STANDOUT FEATURE. Returns MULTIPLE candidate routes, each scored on
+        predicted ETA and crowding, so the passenger chooses the trade-off
+        (faster but packed, vs slightly slower but empty).
+
+        Seed data guarantees at least two options between any two seeded stops.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanRequest" }
+      responses:
+        "200":
+          description: Ranked journey options
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanResponse" }
+        "400":
+          description: Unknown stop code, or no route connects the two stops
+
+  /api/trips/{trip_id}/eta:
+    get:
+      tags: [planning]
+      summary: Predicted arrival at each upcoming stop
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Per-stop ETA
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StopEta" }
+
+  /api/trips/{trip_id}/crowd:
+    put:
+      tags: [planning]
+      summary: Manually set the crowd level for a trip
+      description: >
+        Driver/app override, and the DEMO TRIGGER: setting a bus to "low" and
+        re-planning should visibly change the ranking of options.
+      parameters:
+        - name: trip_id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [load]
+              properties:
+                load: { type: integer, minimum: 0, example: 12 }
+                capacity: { type: integer, minimum: 1, example: 50 }
+      responses:
+        "200":
+          description: Updated crowd estimate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CrowdEstimate" }
+
+  /api/authority/dashboard:
+    get:
+      tags: [authority]
+      summary: KPIs for the transport authority
+      responses:
+        "200":
+          description: Dashboard KPIs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+
+  /api/ws/buses:
+    get:
+      tags: [tracking]
+      summary: WebSocket stream of live bus positions
+      description: >
+        Pushes the same BusPosition array as /api/buses/active roughly every
+        2 seconds. Clients must tolerate a heartbeat-only message.
+      responses:
+        "101":
+          description: Switching protocols
+
+components:
+  schemas:
+
+    Stop:
+      type: object
+      required: [id, code, name, lat, lon]
+      properties:
+        id: { type: integer, example: 1 }
+        code: { type: string, example: STOP_COLLEGE }
+        name: { type: string, example: City College }
+        lat: { type: number, format: double, example: 12.9716 }
+        lon: { type: number, format: double, example: 77.5946 }
+        accessible: { type: boolean, example: true }
+
+    Route:
+      type: object
+      required: [id, code, name]
+      properties:
+        id: { type: integer, example: 21 }
+        code: { type: string, example: "21A" }
+        name: { type: string, example: College to Railway Station }
+        direction: { type: string, enum: [up, down], example: up }
+        stop_count: { type: integer, example: 4 }
+
+    RouteStop:
+      type: object
+      required: [seq, stop]
+      properties:
+        seq: { type: integer, description: Zero-based position in travel order }
+        stop: { $ref: "#/components/schemas/Stop" }
+        scheduled_offset_sec:
+          type: integer
+          description: Seconds from trip start to scheduled arrival here
+
+    BusPosition:
+      type: object
+      required: [bus_id, lat, lon, ts]
+      properties:
+        bus_id: { type: integer, example: 1 }
+        bus_reg: { type: string, example: KA01AB1234 }
+        trip_id: { type: integer, example: 1 }
+        route_id: { type: integer, example: 21 }
+        route_code: { type: string, example: "21A" }
+        lat: { type: number, format: double, example: 12.9716 }
+        lon: { type: number, format: double, example: 77.5946 }
+        heading: { type: number, description: Degrees from north }
+        speed_kmph: { type: number, example: 28.4 }
+        next_stop_name: { type: string, example: Main Road }
+        crowd_level: { type: string, enum: [low, med, high] }
+        crowd_load: { type: integer, example: 35 }
+        capacity: { type: integer, example: 50 }
+        wheelchair_accessible: { type: boolean, example: true }
+        low_floor: { type: boolean, example: true }
+        ts: { type: string, format: date-time }
+
+    PlanRequest:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          description: Stop code
+          example: STOP_COLLEGE
+        to:
+          type: string
+          description: Stop code
+          example: STOP_RAILWAY
+        accessibility_only:
+          type: boolean
+          default: false
+          description: When true, drop options with no wheelchair-accessible bus
+
+    PlanResponse:
+      type: object
+      required: [from, to, options]
+      properties:
+        from: { $ref: "#/components/schemas/Stop" }
+        to: { $ref: "#/components/schemas/Stop" }
+        generated_at: { type: string, format: date-time }
+        options:
+          type: array
+          description: >
+            Always at least two for seeded stops. Ranked by ETA ascending.
+            The UI must render every entry - showing one option defeats the
+            purpose of the feature.
+          items: { $ref: "#/components/schemas/PlanOption" }
+
+    PlanOption:
+      type: object
+      description: ONE CANDIDATE ROUTE. The single most important object in the project.
+      required:
+        [route_id, code, eta_min, eta_predicted_min, delay_min,
+         crowd_level, crowd_load, capacity, stops]
+      properties:
+        route_id: { type: integer, example: 21 }
+        code: { type: string, example: "21A" }
+        name: { type: string, example: College to Railway Station }
+        eta_min:
+          type: integer
+          description: Minutes remaining using HISTORICAL segment times
+          example: 15
+        eta_scheduled_min:
+          type: integer
+          description: Minutes remaining per the published timetable
+          example: 11
+        eta_predicted_min:
+          type: integer
+          description: Alias of eta_min, kept for frontend clarity
+          example: 15
+        delay_min:
+          type: integer
+          description: eta_min minus eta_scheduled_min. Negative means early.
+          example: 4
+        crowd_level: { type: string, enum: [low, med, high] }
+        crowd_load: { type: integer, example: 35 }
+        capacity: { type: integer, example: 50 }
+        crowd_ratio: { type: number, description: crowd_load / capacity, example: 0.7 }
+        wheelchair_accessible: { type: boolean, example: true }
+        low_floor: { type: boolean, example: true }
+        score:
+          type: number
+          description: >
+            Internal ranking score, lower is better.
+            score = w_eta * eta_min + w_crowd * (crowd_ratio * 100)
+          example: 23.5
+        stops:
+          type: array
+          items: { $ref: "#/components/schemas/PlanStop" }
+
+    PlanStop:
+      type: object
+      required: [stop_id, name, eta_min]
+      properties:
+        stop_id: { type: integer, example: 1 }
+        name: { type: string, example: College }
+        eta_min: { type: integer, example: 0 }
+        accessible: { type: boolean, example: true }
+
+    StopEta:
+      type: object
+      required: [stop_id, scheduled_min, predicted_min]
+      properties:
+        stop_id: { type: integer, example: 2 }
+        stop_name: { type: string, example: Main Road }
+        scheduled_min:
+          type: integer
+          description: Per the timetable, relative to now
+          example: 4
+        predicted_min:
+          type: integer
+          description: Model output, relative to now
+          example: 6
+        delay_min: { type: integer, example: 2 }
+
+    CrowdEstimate:
+      type: object
+      required: [trip_id, load, capacity, level]
+      properties:
+        trip_id: { type: integer, example: 1 }
+        stop_id: { type: integer, example: 3 }
+        load: { type: integer, example: 12 }
+        capacity: { type: integer, example: 50 }
+        ratio: { type: number, example: 0.24 }
+        level: { type: string, enum: [low, med, high] }
+        ts: { type: string, format: date-time }
+
+    Dashboard:
+      type: object
+      required: [total_buses, active_buses, delayed_buses]
+      properties:
+        total_buses: { type: integer, example: 4 }
+        active_buses: { type: integer, example: 3 }
+        delayed_buses: { type: integer, example: 1 }
+        avg_delay_min: { type: number, example: 3.4 }
+        high_demand_route: { type: string, example: "21A" }
+        crowded_route: { type: string, example: "21A" }
+        routes:
+          type: array
+          items:
+            type: object
+            properties:
+              route_id: { type: integer }
+              code: { type: string, example: "21A" }
+              active_trips: { type: integer }
+              avg_delay_min: { type: number }
+              avg_crowd_ratio: { type: number }
+              demand_score: { type: number }
+
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string, example: Unknown stop code STOP_MARS }
+        code: { type: string, example: unknown_stop }
+
+# ---------------------------------------------------------------------------
+# Conventions - follow these, they keep the five modules consistent.
+# ---------------------------------------------------------------------------
+conventions:
+  base_path: /api
+  time_format: ISO-8601 UTC with timezone suffix
+  minutes_are_integers: true
+  error_shape: '{ "detail": "human readable", "code": "machine_readable" }'
+  crowd_thresholds:
+    low: "load / capacity < 0.4"
+    med: "0.4 <= load / capacity < 0.75"
+    high: "load / capacity >= 0.75"
+    note: >
+      Seed values are chosen to hit every band: 35/50 = 0.70 (med),
+      12/50 = 0.24 (low), 42/50 = 0.84 (high).
+  ranking:
+    note: >
+      Options are returned sorted by eta_min ascending. The UI shows them
+      side by side. We deliberately do NOT hide the slower-but-empty option.
+  database:
+    engine: SQLAlchemy
+    dev_url: sqlite:///./ridesmart.db
+    note: >
+      ORM models are owned by Member 5 in simulation_ml/db/models.py while
+      Member 4 is unavailable. Member 2 imports from there - do not fork them.
