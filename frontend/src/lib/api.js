@@ -1,0 +1,557 @@
+/**
+ * Adapter over the RideSmart FastAPI backend.
+ *
+ * ============================================================================
+ * What this file is for
+ * ============================================================================
+ * The frontend is written against tests_docs/api_contract.yaml, which
+ * tests_docs/docs/INTEGRATION_REVIEW.md calls the source of truth: "if the code
+ * and this file disagree, that is a bug." This module is the single place where
+ * the wire format is turned into the shape the components want, so no component
+ * ever indexes into a raw API payload.
+ *
+ * It is deliberately TOLERANT. Five members built this backend in parallel and
+ * the shapes drifted before the contract was settled. Four separate spellings of
+ * the same idea are still in the history, and a hard-coded lookup silently
+ * renders the wrong thing rather than throwing:
+ *
+ *   crowd level   "low" | "med" | "high"      <- contract, current app
+ *                 "medium"                    <- Member 2's original
+ *                 "LOW" | "MEDIUM" | "HIGH"   <- Member 1's original
+ *   planner key   options[]                   <- contract
+ *                 routes[]                    <- Member 1
+ *                 candidates[]                <- Member 2
+ *   coordinates   lat / lon                   <- contract
+ *                 latitude / longitude        <- Member 1 and Member 2
+ *
+ * Feed "MEDIUM" into a lookup keyed by the contract's "med" and you get the
+ * default - which is "Low". A full bus would be reported as nearly empty. Every
+ * normaliser below therefore accepts all known spellings.
+ *
+ * ============================================================================
+ * BACKEND CONTRACT (origin/sync-main-with-integration)
+ * ============================================================================
+ *   GET  /api/health              -> { status, database, time }
+ *   GET  /api/routes              -> [{ id, code, name, direction, stop_count }]
+ *   GET  /api/routes/{id}         -> Route & { stops: RouteStop[] }
+ *   GET  /api/routes/{id}/stops   -> [{ seq, scheduled_offset_sec, stop }]
+ *   GET  /api/stops               -> [{ id, code, name, lat, lon, accessible }]
+ *   POST /api/routes/plan         -> { from, to, generated_at, options[] }
+ *   GET  /api/buses/active        -> [BusPosition]     (poll fallback, ~2s)
+ *   GET  /api/buses/{id}/location -> BusPosition
+ *   GET  /api/trips/{id}/eta      -> [{ stop_id, stop_name, scheduled_min,
+ *                                      predicted_min, delay_min }]
+ *   PUT  /api/trips/{id}/crowd    -> CrowdEstimate     (the demo trigger)
+ *   GET  /api/authority/dashboard -> AuthorityDashboard
+ *   WS   /api/ws/buses            -> [BusPosition] pushed every ~2s
+ *
+ * The /api prefix is REAL - database/main.py mounts every router with
+ * prefix="/api" - so the browser's /api/... path is forwarded unchanged.
+ *
+ * Errors are { detail, code } with HTTP 400 (unknown stop / no connection) or
+ * 404 (missing route, trip or bus).
+ */
+
+/**
+ * Base URL for the API.
+ *
+ * Empty by default, which makes every request same-origin and sends it through
+ * the Vite dev proxy in vite.config.js. That sidesteps CORS entirely. Set
+ * VITE_API_URL (the variable the backend's .env.example already defines) to
+ * call the API cross-origin instead - the backend allows CORS from :5173.
+ */
+export const config = {
+  apiBase: import.meta.env?.VITE_API_URL ?? '',
+  pollIntervalMs: 5000,
+  /** The contract says the WebSocket pushes roughly every 2s. */
+  busPollIntervalMs: 2000,
+  /** How long to wait on a reconnecting socket before falling back to polling. */
+  wsGraceMs: 6000,
+}
+
+// ---------------------------------------------------------------------------
+// Crowd
+// ---------------------------------------------------------------------------
+
+/** Every crowd spelling seen across the member branches, mapped to one key. */
+const CROWD_ALIASES = {
+  low: 'low',
+  med: 'medium',
+  medium: 'medium',
+  high: 'high',
+}
+
+/**
+ * Contract thresholds, from api_contract.yaml:
+ *   low  = load / capacity < 0.4
+ *   med  = 0.4 <= ratio < 0.75
+ *   high = ratio >= 0.75
+ *
+ * The label is only trusted when the ratio is missing. When both are present
+ * the ratio wins, because a "med" label computed against a stale capacity will
+ * not match the occupancy actually on board.
+ */
+export function normalizeCrowd(level, { load, capacity, ratio } = {}) {
+  const r =
+    Number.isFinite(Number(ratio)) && ratio !== null
+      ? Number(ratio)
+      : Number.isFinite(Number(load)) &&
+          Number.isFinite(Number(capacity)) &&
+          Number(capacity) > 0
+        ? Number(load) / Number(capacity)
+        : null
+
+  if (r !== null) {
+    if (r < 0.4) return 'low'
+    if (r < 0.75) return 'medium'
+    return 'high'
+  }
+
+  if (typeof level === 'string') {
+    const key = CROWD_ALIASES[level.trim().toLowerCase()]
+    if (key) return key
+  }
+
+  return 'low'
+}
+
+/**
+ * Minutes. The contract states minutes_are_integers: true, but a float from an
+ * older branch must not render as "11.5 min", and a missing value must not
+ * render as "0 min" - that reads as "the bus is here now".
+ */
+export function normalizeEta(value) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return Math.max(0, Math.round(n))
+}
+
+/** Signed delay. Negative means running early, which is worth showing. */
+export function normalizeDelay(value) {
+  if (value === null || value === undefined || value === '') return 0
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.round(n) : 0
+}
+
+function num(value) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function lat(entry) {
+  return num(entry?.lat ?? entry?.latitude)
+}
+
+function lon(entry) {
+  return num(entry?.lon ?? entry?.lng ?? entry?.longitude)
+}
+
+// ---------------------------------------------------------------------------
+// Wire -> UI mappers. Every one of these tolerates the older spellings.
+// ---------------------------------------------------------------------------
+
+export function mapStop(entry) {
+  return {
+    id: entry.id ?? entry.stop_id,
+    code: entry.code,
+    name: entry.name,
+    lat: lat(entry),
+    lon: lon(entry),
+    accessible: Boolean(entry.accessible),
+  }
+}
+
+export function mapRoute(entry) {
+  return {
+    id: entry.id ?? entry.route_id,
+    code: entry.code ?? entry.route_number,
+    name: entry.name ?? `${entry.from} → ${entry.to}`,
+    direction: entry.direction ?? null,
+    stopCount: entry.stop_count ?? null,
+  }
+}
+
+/** One entry of PlanOption.stops[] - minutes remaining to that stop. */
+export function mapPlanStop(entry) {
+  return {
+    stopId: entry.stop_id,
+    name: entry.name,
+    etaMin: normalizeEta(entry.eta_min),
+    accessible: Boolean(entry.accessible),
+  }
+}
+
+/**
+ * One candidate route. This is the object the whole product turns on, so the
+ * normaliser is defensive: the seed data deliberately produces one fast-packed
+ * and one slow-empty option, and a UI that misreads either one destroys the
+ * entire point of the feature.
+ */
+export function mapOption(entry) {
+  const load = num(entry.crowd_load ?? entry.passenger_count)
+  const capacity = num(entry.capacity)
+
+  return {
+    id: `route-${entry.route_id ?? entry.code}`,
+    routeId: entry.route_id,
+    code: entry.code,
+    name: entry.name ?? null,
+
+    etaMin: normalizeEta(entry.eta_min ?? entry.eta_predicted_min ?? entry.eta_minutes),
+    etaScheduledMin: normalizeEta(entry.eta_scheduled_min),
+    delayMin: normalizeDelay(entry.delay_min),
+
+    crowd: normalizeCrowd(entry.crowd_level ?? entry.crowd, {
+      load,
+      capacity,
+      ratio: entry.crowd_ratio,
+    }),
+    load,
+    capacity,
+    /** 0..1, or null when the backend sent neither a ratio nor a capacity. */
+    ratio: num(entry.crowd_ratio) ?? (capacity > 0 && load !== null ? load / capacity : null),
+
+    wheelchair: Boolean(entry.wheelchair_accessible),
+    lowFloor: Boolean(entry.low_floor),
+    score: num(entry.score),
+    stops: (entry.stops ?? []).map(mapPlanStop),
+
+    /**
+     * Optional model metadata. NULL unless the backend actually sends it.
+     *
+     * No endpoint in api_contract.yaml returns this today, and the adapter
+     * deliberately does not synthesise a value when it is absent. A confidence
+     * number invented client-side is worse than no number: a passenger makes a
+     * decision to leave their stop based on it.
+     *
+     * Member 4 has now landed two predictors, and both return a `method` plus
+     * a `validated` flag, so those spellings are handled alongside the
+     * confidence/samples/version shape:
+     *
+     *   simulation_ml/eta_model.py  predict_eta()      -> method "segment_baseline"
+     *   simulation_ml/eta_ml.py     predict_eta_ml()   -> method "experimental_random_forest",
+     *                                                    validated: False
+     *
+     * The distinction matters. eta_ml.py trains a RandomForest on SYNTHETIC
+     * data and says so in its own docstring and in the `validated: false` it
+     * returns, so `validated` is honoured here and `trusted` is derived from
+     * it. The UI uses that to mark an experimental figure instead of quietly
+     * presenting it with the same authority as a contract-backed ETA.
+     *
+     * Note this is additive: no current field is required for it.
+     */
+    prediction: (() => {
+      const method = entry.prediction_method ?? entry.method ?? entry.eta_method ?? null
+      const confidence = num(entry.eta_confidence ?? entry.confidence ?? entry.eta_confidence_pct)
+      const samples = num(entry.samples ?? entry.observed_samples)
+      const version = entry.model_version ?? entry.version ?? null
+      const etaSeconds = num(entry.eta_seconds ?? entry.prediction_eta_sec ?? entry.eta_predicted_sec)
+      const arrivalTime = entry.arrival_time ?? entry.prediction_arrival ?? null
+      const validated = entry.validated === undefined || entry.validated === null ? null : Boolean(entry.validated)
+
+      // arrivalTime and validated are part of the presence test too. A
+      // prediction that carries only an absolute arrival time is still a
+      // prediction, and dropping it would make the field silently vanish
+      // depending on which subset the backend happened to send.
+      if (
+        method === null &&
+        confidence === null &&
+        samples === null &&
+        !version &&
+        etaSeconds === null &&
+        arrivalTime === null &&
+        validated === null
+      ) {
+        return null
+      }
+
+      return {
+        method,
+        confidence,
+        samples,
+        version,
+        etaSeconds,
+        arrivalTime,
+        validated,
+        /*
+          Trust is derived, not asserted. Three independent ways to end up
+          untrusted, any one of which is enough:
+            - the backend explicitly said validated: false
+            - the method name advertises itself as experimental
+            - there is a confidence claim but no sample count behind it
+          Defaulting to trusted when nothing is known keeps a future, properly
+          validated model usable without a code change.
+        */
+        trusted: validated !== false
+          && !(typeof method === 'string' && /experimental|untrained|baseline_untuned/i.test(method))
+          && !(confidence !== null && samples === null),
+      }
+    })(),
+  }
+}
+
+export function mapPlan(payload) {
+  // options[] is the contract; routes[] and candidates[] are the two branches
+  // that predate it.
+  const rows = payload?.options ?? payload?.routes ?? payload?.candidates ?? []
+
+  return {
+    origin: payload?.from ? mapStop(payload.from) : null,
+    destination: payload?.to ? mapStop(payload.to) : null,
+    generatedAt: payload?.generated_at ?? null,
+    options: rows.map(mapOption).sort((a, b) => (a.etaMin ?? 0) - (b.etaMin ?? 0)),
+  }
+}
+
+export function mapBusPosition(entry) {
+  const load = num(entry.crowd_load)
+  const capacity = num(entry.capacity)
+
+  return {
+    busId: entry.bus_id,
+    tripId: entry.trip_id ?? null,
+    routeId: entry.route_id ?? null,
+    routeCode: entry.route_code ?? null,
+    reg: entry.bus_reg ?? null,
+    lat: lat(entry),
+    lon: lon(entry),
+    heading: num(entry.heading) ?? 0,
+    speedKmph: num(entry.speed_kmph) ?? num(entry.speed) ?? 0,
+    nextStopName: entry.next_stop_name ?? null,
+    crowd: normalizeCrowd(entry.crowd_level ?? entry.crowd, { load, capacity }),
+    load,
+    capacity,
+    wheelchair: Boolean(entry.wheelchair_accessible),
+    lowFloor: Boolean(entry.low_floor),
+    ts: entry.ts ?? null,
+  }
+}
+
+export function mapDashboardKpis(payload) {
+  return {
+    totalBuses: num(payload?.total_buses) ?? 0,
+    activeBuses: num(payload?.active_buses) ?? 0,
+    delayedBuses: num(payload?.delayed_buses) ?? 0,
+    avgDelayMin: num(payload?.avg_delay_min),
+    highDemandRoute: payload?.high_demand_route ?? null,
+    crowdedRoute: payload?.crowded_route ?? null,
+    routes: (payload?.routes ?? []).map((r) => ({
+      routeId: r.route_id,
+      code: r.code,
+      activeTrips: num(r.active_trips) ?? 0,
+      avgDelayMin: num(r.avg_delay_min),
+      avgCrowdRatio: num(r.avg_crowd_ratio),
+      demandScore: num(r.demand_score),
+    })),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transport
+// ---------------------------------------------------------------------------
+
+/**
+ * Turns a non-2xx response into a real Error.
+ *
+ * The contract defines failures as { detail, code }. Surfacing `detail` matters
+ * here because the planner's 400 is user-actionable - "Unknown stop code
+ * STOP_MARS" tells the user which picker is wrong, and a generic "request failed"
+ * does not.
+ */
+async function request(path, { signal, method = 'GET', body } = {}) {
+  const res = await fetch(`${config.apiBase}${path}`, {
+    signal,
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(body ? { 'Content-Type': 'application/json' } : null),
+    },
+    ...(body ? { body: JSON.stringify(body) } : null),
+  })
+
+  if (!res.ok) {
+    let detail = `Request failed (${res.status})`
+    let code = null
+    try {
+      const payload = await res.json()
+      if (payload?.detail) detail = String(payload.detail)
+      if (payload?.code) code = String(payload.code)
+    } catch {
+      // Non-JSON error body; the status-based message is fine.
+    }
+    const error = new Error(detail)
+    error.status = res.status
+    error.code = code
+    throw error
+  }
+
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Endpoints
+// ---------------------------------------------------------------------------
+
+export const getHealth = (options) => request('/api/health', options)
+
+export const getStops = (options) => request('/api/stops', options).then((r) => r.map(mapStop))
+
+export const getRoutes = (options) => request('/api/routes', options).then((r) => r.map(mapRoute))
+
+export const getRouteStops = (routeId, options) =>
+  request(`/api/routes/${routeId}/stops`, options).then((r) =>
+    r.map((rs) => ({ seq: rs.seq, offsetSec: rs.scheduled_offset_sec, stop: mapStop(rs.stop) })),
+  )
+
+/**
+ * The centrepiece. POST with a JSON body keyed by stop CODE - not a free-text
+ * query, which is what the retired Member 1 backend took.
+ *
+ * accessibility_only filters out options with no wheelchair-accessible bus.
+ */
+export const planJourney = ({ from, to, accessibilityOnly = false }, options) =>
+  request('/api/routes/plan', {
+    ...options,
+    method: 'POST',
+    body: { from, to, accessibility_only: accessibilityOnly },
+  }).then(mapPlan)
+
+/** Polling fallback for the WebSocket. */
+export const getActiveBuses = (options) =>
+  request('/api/buses/active', options).then((r) => r.map(mapBusPosition))
+
+export const getTripEtas = (tripId, options) =>
+  request(`/api/trips/${tripId}/eta`, options).then((r) =>
+    r.map((s) => ({
+      stopId: s.stop_id,
+      stopName: s.stop_name,
+      scheduledMin: normalizeEta(s.scheduled_min),
+      predictedMin: normalizeEta(s.predicted_min),
+      delayMin: normalizeDelay(s.delay_min),
+    })),
+  )
+
+/**
+ * Manual crowd override - the documented demo trigger: empty a bus, re-plan the
+ * same journey, and watch the ranking change.
+ */
+export const setTripCrowd = ({ tripId, load, capacity, stopId }, options) =>
+  request(`/api/trips/${tripId}/crowd`, {
+    ...options,
+    method: 'PUT',
+    body: {
+      load,
+      ...(capacity ? { capacity } : null),
+      ...(stopId ? { stop_id: stopId } : null),
+    },
+  }).then((r) => ({
+    tripId: r.trip_id,
+    stopId: r.stop_id,
+    load: r.load,
+    capacity: r.capacity,
+    ratio: num(r.ratio),
+    level: normalizeCrowd(r.level, { load: r.load, capacity: r.capacity, ratio: r.ratio }),
+  }))
+
+export const getAuthorityDashboard = (options) =>
+  request('/api/authority/dashboard', options).then(mapDashboardKpis)
+
+/**
+ * WebSocket URL for the live feed, derived from the same base the REST calls
+ * use. Returns null when the app is served over plain http, because the browser
+ * blocks mixed-content ws:// from an https page.
+ */
+export function busSocketUrl() {
+  if (typeof window === 'undefined') return null
+
+  const explicit = import.meta.env?.VITE_WS_URL
+  if (explicit) return explicit
+
+  const base = config.apiBase
+  if (base) {
+    const url = new URL(base)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/api/ws/buses`
+    return url.toString()
+  }
+
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/api/ws/buses`
+}
+
+// ---------------------------------------------------------------------------
+// Offline fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * The seed data's headline story, hardcoded so the planner still demonstrates
+ * the speed-vs-crowd trade-off with the API stopped. These numbers are copied
+ * from simulation_ml/seed/seed.py and are labelled as demo data in the UI.
+ */
+export const DEMO_PLAN = {
+  origin: { id: 1, code: 'STOP_COLLEGE', name: 'City College', lat: 12.9716, lon: 77.5946 },
+  destination: {
+    id: 10,
+    code: 'STOP_RAILWAY',
+    name: 'Railway Station',
+    lat: 12.9795,
+    lon: 77.5568,
+  },
+  options: [
+    {
+      id: 'route-1',
+      routeId: 1,
+      code: '21A',
+      name: 'College to Railway Station',
+      etaMin: 12,
+      etaScheduledMin: 11,
+      delayMin: 1,
+      crowd: 'medium',
+      load: 30,
+      capacity: 50,
+      ratio: 0.6,
+      wheelchair: true,
+      lowFloor: true,
+      score: 48.0,
+      // Same shape mapOption() produces, so components can rely on the key
+      // existing. Null means "no model metadata", never a zeroed-out stand-in.
+      prediction: null,
+      stops: [
+        { stopId: 1, name: 'City College', etaMin: 12 },
+        { stopId: 2, name: 'Central Library', etaMin: 9 },
+        { stopId: 5, name: 'Main Road', etaMin: 5 },
+        { stopId: 9, name: 'Majestic (Central)', etaMin: 2 },
+        { stopId: 10, name: 'Railway Station', etaMin: 0 },
+      ].map((s) => ({ ...s, accessible: true })),
+    },
+    {
+      id: 'route-2',
+      routeId: 2,
+      code: '7B',
+      name: 'College to Railway Station (via Market)',
+      etaMin: 21,
+      etaScheduledMin: 18,
+      delayMin: 3,
+      crowd: 'low',
+      load: 12,
+      capacity: 50,
+      ratio: 0.24,
+      wheelchair: false,
+      lowFloor: false,
+      score: 55.8,
+      prediction: null,
+      stops: [
+        { stopId: 1, name: 'City College', etaMin: 21 },
+        { stopId: 3, name: 'KR Market', etaMin: 12 },
+        { stopId: 9, name: 'Majestic (Central)', etaMin: 4 },
+        { stopId: 10, name: 'Railway Station', etaMin: 0 },
+      ].map((s) => ({ ...s, accessible: true })),
+    },
+  ],
+}
+
+export function demoPlan() {
+  return structuredClone(DEMO_PLAN)
+}

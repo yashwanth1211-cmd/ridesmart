@@ -1,0 +1,5 @@
+# Local dev logs (backend API / simulator sidecar processes)
+api.log
+api.err
+sim.log
+sim.err
