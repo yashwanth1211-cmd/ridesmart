@@ -1,0 +1,19 @@
+# Optional dependencies for simulation_ml/eta_ml.py ONLY.
+#
+# Split out on purpose. eta_ml.py is an experimental RandomForest trained on
+# SYNTHETIC data and nothing on the API or simulator path imports it, so making
+# it a hard requirement would add ~100MB of wheels to every demo install for a
+# feature nobody calls - and a failed install right before a demo is expensive.
+#
+# The runtime path (database/requirements.txt + simulation_ml/requirements.txt)
+# does not need any of this.
+#
+# If you want to try the experimental model:
+#     pip install -r simulation_ml/requirements-ml.txt
+#     python -m simulation_ml.eta_ml
+#
+# For real ETA numbers, use simulation_ml/eta_model.py, which reads the
+# SegmentStat rows the simulator actually observes and needs no extra deps.
+scikit-learn>=1.3,<1.6
+numpy>=1.26
+joblib>=1.3
