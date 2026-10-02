@@ -2,8 +2,8 @@
 
 /*
   Design tokens recovered from the previous production build
-  (dist/assets/index-*-*.css). The cinematic boarding scene is strict dark mode,
-  so the @theme block below carries the dark values directly.
+  (dist/assets/index-*-*.css). The app is a single dark console on top of the
+  product UI video, so the @theme block below carries the dark values directly.
   Light-mode overrides for the rest of the shell live at the bottom of this file.
 */
 @theme {
@@ -168,10 +168,10 @@
 }
 
 /*
-  The /app console layers its panels over the product UI frame (ui-final.png,
-  the closing screen of the design video). That frame is a warm dark map, so
-  the glass frills that sit on it are tinted slightly amber to stay in the
-  same family instead of reading as cold blue-grey.
+  The whole console layers its panels over the product UI video (public/ui.mp4,
+  the design video, muted and looping behind the glass). That video is a warm
+  dark map, so the glass frills that sit on it are tinted slightly amber to stay
+  in the same family instead of reading as cold blue-grey.
 */
 .glass-warm {
   background-color: rgb(24 18 12 / 0.55);
@@ -217,20 +217,6 @@
 }
 
 /*
-  Light-mode palette for the non-3D shell. The boarding experience forces
-  data-theme="dark" on <html> so these never apply there.
+  The app is one console on top of the product UI video, always dark - no part
+  of the shell ever flips to light, so there is no light overrides block.
 */
-[data-theme='light'] {
-  --color-canvas: #fbfbfa;
-  --color-surface: #ffffff;
-  --color-raised: #f4f4f2;
-  --color-ink: #1a1a19;
-  --color-muted: #5d5d58;
-  --color-faint: #8b8b85;
-  --color-line: #e6e5e1;
-  --color-line-strong: #d3d2cd;
-  --color-accent: #3b5bdb;
-  --color-accent-hover: #324ec0;
-  --color-accent-ink: #24357e;
-  --color-accent-soft: #e8edfd;
-}

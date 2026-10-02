@@ -23,13 +23,6 @@ export default defineConfig(({ mode }) => {
         output: {
           codeSplitting: {
             groups: [
-              /*
-                three.js core and drei are split so an update to either does not
-                invalidate the other in the browser cache. drei alone is still a
-                big chunk because it re-exports its whole helper surface.
-              */
-              { name: 'three-core', test: /node_modules[\\/]three[\\/]/ },
-              { name: 'three-drei', test: /node_modules[\\/]@react-three[\\/]/ },
               // The README mandates MapLibre GL, so this is the map vendor.
               {
                 name: 'maplibre',

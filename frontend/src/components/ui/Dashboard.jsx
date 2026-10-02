@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   MapTrifold,
   Path,
   ChartLineUp,
-  ArrowCounterClockwise,
   MagnifyingGlass,
   CloudCheck,
   Clock,
@@ -20,11 +18,12 @@ import SourceBadge from './SourceBadge'
 import FeedBadge from './FeedBadge'
 
 /**
- * The passenger app shell, styled on the product UI frame (public/ui-final.png
- * - the closing frame of the design video). That frame is a warm dark bus map,
- * so the whole console sits on it: a translucent amber-tinted glass header,
- * a vertical view rail, the live map with a floating "ETA predictive" card and
- * a Q-search fleet filter, and a metrics strip at the foot.
+ * The passenger app shell, built directly on the product UI video
+ * (public/ui.mp4 - the design video, looping muted behind the panels). That
+ * video is a warm dark bus map, so the console sits on a dark gradient veil
+ * over it with translucent amber-tinted glass: a vertical view rail, the live
+ * map with a floating "ETA predictive" card and a Q-search fleet filter, and
+ * a metrics strip at the foot.
  *
  * The README's demo script is the spec for the layout underneath:
  *   1. map shows buses moving live
@@ -317,11 +316,16 @@ export default function Dashboard() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col gap-3 p-3 md:p-4">
-      {/* The product UI frame as the base layer, dimmed just enough for glass
-          panels to stay legible without killing the map behind them. */}
-      <img
-        src="/ui-final.png"
-        alt=""
+      {/* The product UI video as the base layer, muted and dimmed just enough
+          for the glass panels to stay legible. It loops the same RideSmart
+          route-tracking screen the real console reconstructs live. */}
+      <video
+        src="/ui.mp4"
+        autoPlay
+        muted
+        loop
+        playsInline
+        poster="/ui-final.png"
         aria-hidden
         className="absolute inset-0 -z-10 h-full w-full object-cover"
       />
@@ -362,14 +366,6 @@ export default function Dashboard() {
           </label>
 
           <FeedBadge transport={transport} count={buses.length} error={busError} />
-
-          <Link
-            to="/board"
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-[12px] text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <ArrowCounterClockwise size={13} />
-            <span className="hidden sm:inline">Boarding intro</span>
-          </Link>
         </div>
       </header>
 
