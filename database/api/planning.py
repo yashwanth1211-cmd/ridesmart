@@ -10,10 +10,11 @@ Returning a single option would defeat the purpose.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database.core.database import get_db
+from database.core.errors import ApiError
 from database.schemas.planning import PlanRequest, PlanResponse
 from database.services.planner import plan_journey
 
@@ -26,10 +27,19 @@ def plan(request: PlanRequest, db: Session = Depends(get_db)):
     to_code = request.to.strip()
 
     if not from_code or not to_code:
-        raise HTTPException(
+        raise ApiError(
             status_code=400,
             detail="from and to are required",
-            headers={"X-Code": "missing_stops"},
+            code="missing_stops",
+        )
+
+    known = _codes(db)
+    if from_code not in known or to_code not in known:
+        unknown = from_code if from_code not in known else to_code
+        raise ApiError(
+            status_code=400,
+            detail=f"Unknown stop code: {unknown}",
+            code="unknown_stop",
         )
 
     result = plan_journey(
@@ -40,10 +50,11 @@ def plan(request: PlanRequest, db: Session = Depends(get_db)):
     )
 
     if result is None:
-        raise HTTPException(
+        # Both stops are real, but nothing connects them.
+        raise ApiError(
             status_code=400,
-            detail=f"Unknown stop code: {from_code if from_code not in _codes(db) else to_code}",
-            headers={"X-Code": "unknown_stop"},
+            detail=f"No route connects {from_code} to {to_code}",
+            code="no_route",
         )
 
     return result

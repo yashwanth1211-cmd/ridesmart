@@ -155,6 +155,59 @@ class TestTracking:
         assert {"bus_id", "lat", "lon", "ts"} <= payload[0].keys()
 
 
+class TestErrorShape:
+    """conventions.error_shape: { "detail": ..., "code": ... }.
+
+    The backend originally returned only `detail` and smuggled the code through
+    an X-Code header, so the frontend's adapter had to cope with a body that
+    violated the contract. Every error path is checked here so that cannot come
+    back.
+    """
+
+    def _assert_shape(self, r):
+        assert r.status_code >= 400, f"expected an error, got {r.status_code}"
+        body = r.json()
+        assert "detail" in body, f"missing 'detail': {body}"
+        assert "code" in body, f"missing 'code': {body}"
+        assert isinstance(body["code"], str) and body["code"]
+        assert isinstance(body["detail"], str) and body["detail"]
+
+    def test_unknown_stop(self, client):
+        r = client.post(
+            "/api/routes/plan",
+            json={"from": "STOP_MARS", "to": "STOP_RAILWAY"},
+        )
+        self._assert_shape(r)
+        assert r.json()["code"] == "unknown_stop"
+
+    def test_blank_stops(self, client):
+        r = client.post("/api/routes/plan", json={"from": "  ", "to": ""})
+        self._assert_shape(r)
+        assert r.json()["code"] == "missing_stops"
+
+    def test_unknown_route(self, client):
+        self._assert_shape(client.get("/api/routes/99999"))
+        self._assert_shape(client.get("/api/routes/99999/stops"))
+
+    def test_unknown_trip(self, client):
+        self._assert_shape(client.get("/api/trips/99999/eta"))
+        self._assert_shape(client.put("/api/trips/99999/crowd", json={"level": "low"}))
+
+    def test_unknown_bus(self, client):
+        self._assert_shape(client.get("/api/buses/99999/location"))
+
+    def test_unmatched_path(self, client):
+        """A 404 from routing itself must still carry a code."""
+        self._assert_shape(client.get("/api/definitely-not-a-route"))
+
+    def test_validation_error(self, client):
+        """A malformed body becomes 422 with the contract shape, not FastAPI's
+        default bare {"detail": [...]} list."""
+        r = client.post("/api/routes/plan", json={"nonsense": True})
+        self._assert_shape(r)
+        assert r.status_code == 422
+
+
 class TestPlanner:
     """THE demo-critical tests."""
 
@@ -211,7 +264,10 @@ class TestPlanner:
             json={"from": "STOP_MARS", "to": "STOP_RAILWAY"},
         )
         assert r.status_code == 400, r.text
-        assert "detail" in r.json()
+        body = r.json()
+        assert "detail" in body
+        # contract: error_shape is {detail, code}
+        assert body["code"] == "unknown_stop"
 
     def test_accessibility_filter_drops_inaccessible_options(self, client):
         r = client.post(

@@ -16,8 +16,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from database.api.buses import router as buses_router
 from database.api.dashboard import router as dashboard_router
@@ -28,6 +31,7 @@ from database.api.trip import router as trip_router
 from database.api.websocket import router as websocket_router
 from database.core.config import settings
 from database.core.database import SessionLocal, init_db
+from database.core.errors import ApiError, code_for
 
 
 @asynccontextmanager
@@ -45,6 +49,51 @@ app = FastAPI(
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )
+
+# ---------------------------------------------------------------------------
+# Error shape - see tests_docs/api_contract.yaml `conventions.error_shape`
+# Every error response is {"detail": ..., "code": ...}. Registered globally
+# rather than per-endpoint so a new route cannot forget `code`.
+# ---------------------------------------------------------------------------
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request: Request, exc: ApiError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "code": exc.code},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    """Catches plain HTTPException and the 404s from unmatched paths."""
+    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    code = getattr(exc, "code", None) or code_for(exc.status_code)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": detail, "code": code},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """Malformed request bodies become 422 with the contract shape.
+
+    FastAPI's default is {"detail": [ ...list of dicts... ]}, which is not a
+    string and has no code.
+    """
+    first = exc.errors()[0] if exc.errors() else {}
+    field = ".".join(str(p) for p in first.get("loc", [])[1:]) or "body"
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": f"{field}: {first.get('msg', 'invalid request')}",
+            "code": "validation_error",
+        },
+    )
 
 app.add_middleware(
     CORSMiddleware,

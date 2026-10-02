@@ -5,10 +5,11 @@ OWNER: Member 5 (integration). Replaces Member 2's hardcoded ACTIVE_BUSES list.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database.core.database import get_db
+from database.core.errors import ApiError
 from database.schemas.bus import BusPosition, IngestResponse, PositionIngest
 from database.services.tracking import active_positions, bus_position, ingest_positions
 
@@ -40,5 +41,5 @@ def ingest(payload: list[PositionIngest], db: Session = Depends(get_db)):
 def get_bus_location(bus_id: int, db: Session = Depends(get_db)):
     position = bus_position(db, bus_id)
     if position is None:
-        raise HTTPException(status_code=404, detail=f"Bus {bus_id} not found")
+        raise ApiError(status_code=404, detail=f"Bus {bus_id} not found", code="bus_not_found")
     return position
