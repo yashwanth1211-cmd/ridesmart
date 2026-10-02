@@ -1,0 +1,33 @@
+# RideSmart - development stack
+#
+# Member 5 owns this file. If you need to change it, say so in the group chat.
+#
+# Deliberately minimal: just the API. The database is SQLite (a file), so there
+# is no db service to wait on and nothing to keep in sync. The frontend runs
+# in dev mode via `npm run dev` instead of a container -- fewer moving parts
+# when you are racing a demo.
+#
+#   docker compose up -d --build
+#   curl http://localhost:8000/api/health
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    container_name: ridesmart-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/ridesmart.db}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    volumes:
+      # keeps the seeded DB across container restarts
+      - ridesmart_data:/data
+      # live reload for Member 2's code
+      - ./database:/app/database
+      - ./backend:/app/backend
+    restart: unless-stopped
+
+volumes:
+  ridesmart_data:
