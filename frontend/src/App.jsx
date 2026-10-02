@@ -2,14 +2,15 @@ import { Suspense, lazy } from 'react'
 import { BrowserRouter, Navigate, useRoutes } from 'react-router-dom'
 
 /*
-  The app is the console, end to end: the video-based dashboard described in
-  src/components/ui/Dashboard.jsx. There is no separate landing page and no 3D
-  boarding sequence - everything is layered on the product UI video, so both
-  routes below resolve to the same experience.
+  The app runs on the product UI video end to end, exactly as provided - no 3D
+  and no generated intro. '/' IS the cinematic intro: the video playing
+  fullscreen, which hands off to /app where the same video loops behind the
+  console.
 
   The console is code-split: it pulls in MapLibre, the only large dependency
-  left, and is only needed once the shell loads.
+  left, and is only needed once you leave the intro.
 */
+const Intro = lazy(() => import('@/pages/Intro'))
 const Console = lazy(() => import('@/pages/Console'))
 
 function PageLoading() {
@@ -29,7 +30,7 @@ function AppRoutes() {
       path: '/',
       element: (
         <Suspense fallback={<PageLoading />}>
-          <Console />
+          <Intro />
         </Suspense>
       ),
     },
