@@ -2,8 +2,6 @@ import { Broadcast, CloudSlash } from '@phosphor-icons/react'
 
 /**
  * Bus feed health. Distinguishes the WebSocket from the polling fallback.
- * Shared between the /app console header and the boarding dashboard horizon so
- * both surfaces show exactly the same feed state.
  */
 export default function FeedBadge({ transport, count, error }) {
   const live = transport === 'ws'

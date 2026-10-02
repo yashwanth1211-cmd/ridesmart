@@ -1,17 +1,16 @@
 import { Suspense, lazy } from 'react'
-import { BrowserRouter, useRoutes } from 'react-router-dom'
-import Home from '@/pages/Home'
-import Layout from '@/components/Layout'
+import { BrowserRouter, Navigate, useRoutes } from 'react-router-dom'
 
 /*
-  The boarding experience pulls in three.js + drei, so it is code split.
-  Rolldown emits it as its own chunk, and three is additionally pinned to a
-  dedicated vendor group in vite.config.js.
+  The app runs on the product UI video end to end, exactly as provided - no 3D
+  and no generated intro. '/' IS the cinematic intro: the video playing
+  fullscreen, which hands off to /app where the same video loops behind the
+  console.
 
-  The console is also split: it pulls in MapLibre, which is a large dependency
-  and is only needed once you leave the landing page.
+  The console is code-split: it pulls in MapLibre, the only large dependency
+  left, and is only needed once you leave the intro.
 */
-const BoardingExperience = lazy(() => import('@/pages/Boarding'))
+const Intro = lazy(() => import('@/pages/Intro'))
 const Console = lazy(() => import('@/pages/Console'))
 
 function PageLoading() {
@@ -29,23 +28,12 @@ function AppRoutes() {
   return useRoutes([
     {
       path: '/',
-      element: <Layout />,
-      children: [
-        {
-          index: true,
-          element: (
-            <Suspense fallback={<PageLoading />}>
-              <Home />
-            </Suspense>
-          ),
-        },
-      ],
+      element: (
+        <Suspense fallback={<PageLoading />}>
+          <Intro />
+        </Suspense>
+      ),
     },
-    /*
-      The passenger console is full-bleed - the map needs the whole viewport - so
-      it sits outside <Layout> like the boarding scene does, and supplies its own
-      header.
-    */
     {
       path: '/app',
       element: (
@@ -54,14 +42,7 @@ function AppRoutes() {
         </Suspense>
       ),
     },
-    {
-      path: '/board',
-      element: (
-        <Suspense fallback={<PageLoading />}>
-          <BoardingExperience />
-        </Suspense>
-      ),
-    },
+    { path: '*', element: <Navigate to="/" replace /> },
   ])
 }
 

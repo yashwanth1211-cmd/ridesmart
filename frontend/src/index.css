@@ -2,8 +2,8 @@
 
 /*
   Design tokens recovered from the previous production build
-  (dist/assets/index-*-*.css). The cinematic boarding scene is strict dark mode,
-  so the @theme block below carries the dark values directly.
+  (dist/assets/index-*-*.css). The app is a single dark console on top of the
+  product UI video, so the @theme block below carries the dark values directly.
   Light-mode overrides for the rest of the shell live at the bottom of this file.
 */
 @theme {
@@ -168,19 +168,26 @@
 }
 
 /*
-  The horizontal dashboard scroll layer drei appends to the canvas host. R3F's
-  host div (className="rs-horizon-host" in Scene.jsx) wraps an inner container
-  div that holds the <canvas>; the drei layer is appended as the only other
-  child of that inner container. Its scrollbar is hidden because the curious
-  page dots in the handoff pill are the actual affordance - a raw track under
-  the glass pages would break the illusion.
+  The whole console layers its panels over the product UI video (public/ui.mp4,
+  the design video, muted and looping behind the glass). That video is a warm
+  dark map, so the glass frills that sit on it are tinted slightly amber to stay
+  in the same family instead of reading as cold blue-grey.
 */
-.rs-horizon-host > div > div {
-  scrollbar-width: none;
+.glass-warm {
+  background-color: rgb(24 18 12 / 0.55);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid rgb(255 208 138 / 0.16);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.45);
+  border-radius: 1rem;
 }
 
-.rs-horizon-host > div > div::-webkit-scrollbar {
-  display: none;
+.glow-amber {
+  box-shadow: 0 0 15px rgb(245 158 11 / 0.45);
+}
+
+.glow-amber-strong {
+  box-shadow: 0 0 24px rgb(245 158 11 / 0.6), 0 0 48px rgb(245 158 11 / 0.25);
 }
 
 @keyframes shimmer {
@@ -203,6 +210,24 @@
   animation: shimmer 1.4s linear infinite;
 }
 
+/*
+  The console fades in once the video intro hands off, and the intro fades out
+  over the same 700ms, so the end of the video runs straight into the live
+  dashboard without a cut.
+*/
+@keyframes rs-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.rs-fade-in {
+  animation: rs-fade-in 0.7s ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
@@ -210,20 +235,6 @@
 }
 
 /*
-  Light-mode palette for the non-3D shell. The boarding experience forces
-  data-theme="dark" on <html> so these never apply there.
+  The app is one console on top of the product UI video, always dark - no part
+  of the shell ever flips to light, so there is no light overrides block.
 */
-[data-theme='light'] {
-  --color-canvas: #fbfbfa;
-  --color-surface: #ffffff;
-  --color-raised: #f4f4f2;
-  --color-ink: #1a1a19;
-  --color-muted: #5d5d58;
-  --color-faint: #8b8b85;
-  --color-line: #e6e5e1;
-  --color-line-strong: #d3d2cd;
-  --color-accent: #3b5bdb;
-  --color-accent-hover: #324ec0;
-  --color-accent-ink: #24357e;
-  --color-accent-soft: #e8edfd;
-}

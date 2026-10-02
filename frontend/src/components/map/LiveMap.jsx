@@ -74,6 +74,7 @@ export default function LiveMap({
   const readyRef = useRef(false)
   const latest = useRef({})
   const popupRef = useRef(null)
+  const fittedRouteRef = useRef('')
 
   latest.current = { buses, routeStops, origin, destination, selectedRouteCode, onSelectBus }
 
@@ -112,6 +113,22 @@ export default function LiveMap({
             ],
           },
     )
+
+    // Frame the route the moment its coordinates resolve - on the very first
+    // mount routeStops usually arrive AFTER the map's 'load' event, so an
+    // early fitBounds here would be skipped and the map would sit on the
+    // generic default viewport until the view happened to remount. Tracking a
+    // signature of the coordinates refits only when the route actually changes,
+    // never when a bus ticks, and never fights a pan the user has done since.
+    if (coords.length > 1) {
+      const signature = coords.map((c) => `${c[0].toFixed(6)},${c[1].toFixed(6)}`).join('|')
+      if (signature !== fittedRouteRef.current) {
+        fittedRouteRef.current = signature
+        const bounds = new LngLatBounds()
+        coords.forEach((c) => bounds.extend(c))
+        map.fitBounds(bounds, { padding: 90, maxZoom: 15, duration: 900 })
+      }
+    }
     map.getSource('endpoints')?.setData(toCollection([o, d].filter(Boolean), (s) => ({ code: s.code })))
 
     // The selected route's vehicles get a halo so the passenger can pick their
@@ -280,13 +297,6 @@ export default function LiveMap({
     map.on('mouseleave', 'bus-points', hideTooltip)
     map.on('mouseleave', 'bus-halo', hideTooltip)
     map.on('click', hideTooltip)
-
-    // Frame the route when one is selected.
-    if (routeStops.length > 1) {
-      const bounds = new LngLatBounds()
-      routeStops.forEach((s) => bounds.extend([s.lon, s.lat]))
-      map.fitBounds(bounds, { padding: 90, maxZoom: 15, duration: 900 })
-    }
 
     return () => {
       popupRef.current?.remove()
