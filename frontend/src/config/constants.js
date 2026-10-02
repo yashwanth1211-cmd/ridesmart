@@ -192,38 +192,6 @@ export const CAMERA = {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard horizon - the horizontal-scroll product layer
-// ---------------------------------------------------------------------------
-
-/**
- * The post-boarding dashboard is a PeachWorlds-style horizontal scroll wrapped
- * in drei's <ScrollControls horizontal pages={3} damping={0.2}>. This block is
- * the single source of truth for the page count, the spring rate and how far
- * the parked camera drifts sideways as the passenger swipes between pages.
- *
- * The camera base is CAMERA.WAYPOINTS[6] / CAMERA.LOOKAT[6] (the in-aisle pose
- * the journey ends on). parallaxX and parallaxLookX are ONE-SIDED travel, so
- * across the full scroll range the camera sweeps -parallaxX..+parallaxX around
- * that base. Both stays well inside BUS.halfWidth (1.25) so the lens never
- * clips a wall: base x is 0.45, limits are -0.1..1.0, glass walls sit at 1.25.
- */
-export const DASHBOARD_SCROLL = {
-  pages: 3,
-  distance: 1,
-  /** drei ScrollControls spring rate - the "floaty" feel PeachWorlds ships. */
-  damping: 0.2,
-  /** Camera x-travel in world units across the whole scroll range. */
-  parallaxX: 0.55,
-  /** Look-target x-travel - larger than parallaxX to sell the dollied pan. */
-  parallaxLookX: 1.25,
-  /** How fast the camera chases the scroll (THREE.MathUtils.damp lambda). */
-  parallaxDamping: 1.6,
-  /** Squeeze all of the above when the user prefers reduced motion. */
-  reducedMotionScale: 0.2,
-  /** Short labels for the handoff pill's page dots, one per page. */
-  pageLabels: ['Live map & routes', 'Journey planner', 'Authority & crowd'],
-}
-
 // ---------------------------------------------------------------------------
 // Environment - golden hour
 // ---------------------------------------------------------------------------

@@ -4,7 +4,6 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { useProgress } from '@react-three/drei'
 import { APP_STATE, CAMERA, LIGHTING, RENDER } from '@/config/constants'
 import { useAppStore } from '@/store/appStore'
-import HorizonDashboard from '@/components/ui/HorizonDashboard'
 import Backdrop from './Backdrop'
 import Road from './Road'
 import Bus from './Bus'
@@ -79,7 +78,7 @@ function AssetGate() {
 
 /**
  * Once the camera is parked, the canvas runs on demand. Anything that
- * repaints the 3D layer (the dashboard's live data ticking over) bumps
+ * repaints the 3D layer (the handoff pill's live data ticking over) bumps
  * dataVersion to ask for exactly one more frame.
  */
 function DemandInvalidator() {
@@ -93,24 +92,11 @@ function DemandInvalidator() {
   return null
 }
 
-/**
- * The horizontal-scroll dashboard only exists at the DASHBOARD state - during
- * ARRIVING/ENTERING the drei ScrollControls layer would sit on top of the
- * cinematic, so it is mounted (and unmounted) with the state, not merely
- * hidden.
- */
-function HorizonGate() {
-  const state = useAppStore((s) => s.state)
-  if (state !== APP_STATE.DASHBOARD) return null
-  return <HorizonDashboard />
-}
-
 export default function Scene({ hasModel, hasTexture }) {
   const interactive = useAppStore((s) => s.interactive)
 
   return (
     <Canvas
-      className="rs-horizon-host"
       // Explicit type: R3F's boolean `shadows` resolves to PCFSoftShadowMap,
       // which three 0.186 removed. PCFShadowMap is the soft-filtered option
       // that still exists.
@@ -146,7 +132,6 @@ export default function Scene({ hasModel, hasTexture }) {
 
       <Road />
       <CameraJourney />
-      <HorizonGate />
       <DemandInvalidator />
     </Canvas>
   )

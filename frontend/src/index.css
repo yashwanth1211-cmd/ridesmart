@@ -168,19 +168,26 @@
 }
 
 /*
-  The horizontal dashboard scroll layer drei appends to the canvas host. R3F's
-  host div (className="rs-horizon-host" in Scene.jsx) wraps an inner container
-  div that holds the <canvas>; the drei layer is appended as the only other
-  child of that inner container. Its scrollbar is hidden because the curious
-  page dots in the handoff pill are the actual affordance - a raw track under
-  the glass pages would break the illusion.
+  The /app console layers its panels over the product UI frame (ui-final.png,
+  the closing screen of the design video). That frame is a warm dark map, so
+  the glass frills that sit on it are tinted slightly amber to stay in the
+  same family instead of reading as cold blue-grey.
 */
-.rs-horizon-host > div > div {
-  scrollbar-width: none;
+.glass-warm {
+  background-color: rgb(24 18 12 / 0.55);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid rgb(255 208 138 / 0.16);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.45);
+  border-radius: 1rem;
 }
 
-.rs-horizon-host > div > div::-webkit-scrollbar {
-  display: none;
+.glow-amber {
+  box-shadow: 0 0 15px rgb(245 158 11 / 0.45);
+}
+
+.glow-amber-strong {
+  box-shadow: 0 0 24px rgb(245 158 11 / 0.6), 0 0 48px rgb(245 158 11 / 0.25);
 }
 
 @keyframes shimmer {

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Warning, ArrowRight } from '@phosphor-icons/react'
 import Scene from '@/components/3d/Scene'
 import { OverlayLoader, SequenceHud } from '@/components/ui/OverlayLoader'
-import { APP_STATE, BACKDROP, DASHBOARD_SCROLL, MODEL } from '@/config/constants'
+import { APP_STATE, BACKDROP, MODEL } from '@/config/constants'
 import { useAppStore } from '@/store/appStore'
 import { probeAssets } from '@/lib/assets'
 import { useDocumentTitle } from '@/lib/useDocumentTitle'
@@ -34,17 +34,12 @@ function WebGLFallback() {
 /**
  * The door opens onto the app.
  *
- * Originally a full-screen modal; now a compact floating bar because the
- * dashboard itself fills the canvas behind it as a horizontal scroll. The bar
- * keeps the E2E-pinned handoff narrative ("Doors open" / "You're on board." /
- * a "Plan a journey" button that walks into /app) while adding page dots that
- * track the 3D scroll parallax, so it reads as the dashboard's header rather
- * than a dead-end overlay.
+ * A compact floating pill (rather than a full-screen modal) that keeps the
+ * E2E-pinned handoff narrative ("Doors open" / "You're on board." / a
+ * "Plan a journey" button that walks into /app) over the parked 3D interior,
+ * then hands off to the passenger console styled on the product UI.
  */
-function SequenceEnd({ modelSource, onContinue }) {
-  const dashboardPage = useAppStore((s) => s.dashboardPage)
-  const labels = DASHBOARD_SCROLL.pageLabels
-
+function SequenceEnd({ onContinue }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center px-4">
       <div className="glass-panel-strong pointer-events-auto flex max-w-full flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-white/10 px-4 py-2.5">
@@ -55,22 +50,9 @@ function SequenceEnd({ modelSource, onContinue }) {
           <span className="text-[13px] font-medium whitespace-nowrap text-white">You're on board.</span>
         </div>
 
-        <div className="flex items-center gap-2" aria-label="Dashboard pages">
-          <div className="flex items-center gap-1.5">
-            {labels.map((label, i) => (
-              <span
-                key={label}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  i === dashboardPage ? 'w-4 bg-brand-blue glow-blue' : 'w-1.5 bg-white/25'
-                }`}
-              />
-            ))}
-          </div>
-          <span className="text-[11px] text-gray-400">{labels[dashboardPage]}</span>
-        </div>
-
         <span className="hidden text-[11px] text-gray-500 xl:inline">
-          {modelSource === 'glb' ? 'Live bus model' : 'Procedural bus'} · Bengaluru
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle glow-blue" />
+          <span className="ml-1.5 align-middle">Live feed · Bengaluru</span>
         </span>
 
         <button
@@ -92,7 +74,6 @@ export default function Boarding() {
 
   const state = useAppStore((s) => s.state)
   const interactive = useAppStore((s) => s.interactive)
-  const modelSource = useAppStore((s) => s.modelSource)
 
   // Bumped only by store.reset(). Changing the key tears the whole Canvas down
   // and rebuilds it, which is the only way to get a genuinely cold scene - a
@@ -165,7 +146,7 @@ export default function Boarding() {
       */}
       {state !== APP_STATE.LOADING && state !== APP_STATE.DASHBOARD && <SequenceHud />}
       {interactive && state === APP_STATE.DASHBOARD && (
-        <SequenceEnd modelSource={modelSource} onContinue={() => navigate('/app')} />
+        <SequenceEnd onContinue={() => navigate('/app')} />
       )}
     </div>
   )

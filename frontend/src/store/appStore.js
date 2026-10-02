@@ -53,14 +53,6 @@ export const useAppStore = create((set, get) => ({
   /** Honours prefers-reduced-motion by collapsing the sequence. */
   reducedMotion: false,
 
-  /**
-   * Which horizontal-scroll dashboard page the camera is parked over.
-   * Driving this through the store keeps the handoff pill's dots in sync with
-   * the 3D parallax without a DOM <-> canvas subscription in the other
-   * direction. Written by ScrollParallax only when the page actually changes.
-   */
-  dashboardPage: 0,
-
   // ---- actions -----------------------------------------------------------
 
   /**
@@ -88,9 +80,6 @@ export const useAppStore = create((set, get) => ({
   setJourneyProgress: (journeyProgress) => set({ journeyProgress }),
   setReducedMotion: (reducedMotion) => set({ reducedMotion }),
   bumpDataVersion: () => set((s) => ({ dataVersion: s.dataVersion + 1 })),
-
-  setDashboardPage: (dashboardPage) =>
-    set((s) => (s.dashboardPage === dashboardPage ? s : { dashboardPage })),
 
   /**
    * Collapse the whole sequence straight to the dashboard.
