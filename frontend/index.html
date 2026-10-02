@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="RideSmart tracks city buses live, predicts arrival times and plans trips around how crowded each bus is."
+    />
+    <meta name="theme-color" content="#fbfbfa" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>RideSmart / Live bus tracking and trip planning</title>
+    <script>
+      (() => {
+        const stored = localStorage.getItem('ridesmart-theme')
+        const system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        document.documentElement.dataset.theme = stored || system
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
