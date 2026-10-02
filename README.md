@@ -139,15 +139,23 @@ Live Tracking  Route Planner  Crowd + Dashboard
 
 ```text
 ridesmart/
-├── backend/          # M1  tracking + ETA/crowd prediction services
-├── database/         # M2  FastAPI application
+├── simulation_ml/    # M4  schema (SQLAlchemy models), seed data, bus simulator
+├── database/         # FastAPI application: routers, schemas, services
+│   ├── main.py       #     app factory, lifespan (create tables + seed), CORS
+│   ├── api/          #     HTTP routers + /api/ws/buses WebSocket
+│   ├── core/         #     engine/session wiring, settings
+│   ├── schemas/      #     Pydantic request/response models
+│   └── services/     #     planner, tracking, dashboard business logic
 ├── frontend/         # M3  React passenger app
-├── simulation_ml/    # M4  schema, seed data, bus simulator
 ├── tests_docs/       # M5  API contract, tests, docs, deployment
 ├── docker/           # M5  Dockerfiles
 ├── docker-compose.yml
 └── .env.example
 ```
+
+One application, one schema. `simulation_ml/db/models.py` is the single source of
+truth for the 9 tables, and the API reads the exact same rows the simulator
+writes, so there is no second copy of the data to keep in sync.
 
 ## 🛠️ Tech Stack
 
@@ -179,14 +187,16 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS / Linux
 
 # 4. Install dependencies
+pip install -r database/requirements.txt
 pip install -r simulation_ml/requirements.txt
-pip install -r tests_docs/requirements.txt
 
 # 5. Seed the database  (3 routes, 12 stops, 4 buses, 3 active trips)
+#    Optional: the API seeds automatically on startup, so this is only needed
+#    if you want the DB ready before the server starts.
 python -m simulation_ml.seed.seed --reset
 
 # 6. Start the API   → http://localhost:8000
-uvicorn database.app.main:app --reload
+uvicorn database.main:app --reload
 
 # 7. Start the bus simulator, in a second terminal
 python -m simulation_ml.simulate --speed 5 --interval 2
@@ -237,6 +247,7 @@ Reference: [`tests_docs/docs/API.md`](tests_docs/docs/API.md)
 | `GET` | `/api/routes/{id}/stops` | Ordered stops for a route | M2 |
 | `GET` | `/api/stops` | All stops (planner pickers) | M2 |
 | `GET` | `/api/buses/active` | Latest position of every active bus | M2 |
+| `POST` | `/api/buses/ingest` | Telemetry sink for `simulate --push` | M2 |
 | `POST` | `/api/routes/plan` | **Plan A→B — returns ranked options** | M2 |
 | `GET` | `/api/trips/{id}/eta` | Predicted arrival per stop | M2 |
 | `PUT` | `/api/trips/{id}/crowd` | Override crowd level | M2 |
@@ -254,44 +265,57 @@ curl -X POST http://localhost:8000/api/routes/plan \
 
 ```json
 {
-  "from": { "id": 1, "code": "STOP_COLLEGE", "name": "City College" },
-  "to":   { "id": 10, "code": "STOP_RAILWAY", "name": "Railway Station" },
+  "from": { "id": 1, "code": "STOP_COLLEGE", "name": "City College", "lat": 12.9716, "lon": 77.5946, "accessible": true },
+  "to":   { "id": 10, "code": "STOP_RAILWAY", "name": "Railway Station", "lat": 12.9795, "lon": 77.5568, "accessible": true },
+  "generated_at": "2026-10-02T03:12:55Z",
   "options": [
     {
       "route_id": 1,
       "code": "21A",
-      "eta_min": 15,
+      "name": "College to Railway Station",
+      "eta_min": 12,
       "eta_scheduled_min": 11,
-      "eta_predicted_min": 15,
-      "delay_min": 4,
+      "eta_predicted_min": 12,
+      "delay_min": 1,
       "crowd_level": "med",
-      "crowd_load": 35,
+      "crowd_load": 30,
       "capacity": 50,
-      "crowd_ratio": 0.7,
+      "crowd_ratio": 0.6,
       "wheelchair_accessible": true,
       "low_floor": true,
+      "score": 48.0,
       "stops": [
-        { "stop_id": 1, "name": "City College", "eta_min": 0, "accessible": true }
+        { "stop_id": 1,  "name": "City College",       "eta_min": 12, "accessible": true },
+        { "stop_id": 2,  "name": "Central Library",    "eta_min": 9,  "accessible": true },
+        { "stop_id": 5,  "name": "Main Road",          "eta_min": 5,  "accessible": true },
+        { "stop_id": 9,  "name": "Majestic (Central)", "eta_min": 2,  "accessible": true },
+        { "stop_id": 10, "name": "Railway Station",    "eta_min": 0,  "accessible": true }
       ]
     },
     {
       "route_id": 2,
       "code": "7B",
-      "eta_min": 18,
+      "name": "Market to Airport",
+      "eta_min": 21,
       "eta_scheduled_min": 18,
-      "eta_predicted_min": 18,
-      "delay_min": 1,
-      "crowd_level": "low",
-      "crowd_load": 12,
+      "eta_predicted_min": 21,
+      "delay_min": 3,
+      "crowd_level": "med",
+      "crowd_load": 29,
       "capacity": 50,
-      "crowd_ratio": 0.24,
+      "crowd_ratio": 0.58,
       "wheelchair_accessible": false,
       "low_floor": false,
-      "stops": []
+      "score": 55.8,
+      "stops": [ "... 5 stops ..." ]
     }
   ]
 }
 ```
+
+`options` is always sorted by `eta_min`, so `options[0]` is the quickest trip.
+`stops[].eta_min` is *minutes remaining from boarding* for that stop, which is
+why it counts down to `0` at your destination.
 
 </details>
 
@@ -308,19 +332,29 @@ curl -X POST http://localhost:8000/api/routes/plan \
 ## ✅ Testing
 
 ```bash
-cd tests_docs
-pytest -v
-pytest --cov=. --cov-report=term
+# run everything from the repo root
+pytest tests_docs/tests -v
+
+# only the API contract suite
+pytest tests_docs/tests/test_smoke.py -v
 ```
 
-The suite is split so it never blocks the team:
+Every test runs against a throwaway SQLite file created per test, so the suite
+never touches your local `ridesmart.db` and can run in any order.
 
-- **Data-layer tests always run** — seed integrity, crowd banding, the demo
-  contrast between 21A and 7B, simulator movement and geometry.
-- **API tests skip automatically** until `database/app/main.py` exposes `app`.
-  They turn red the moment Member 2's app lands, which is the signal we want.
+The suite is split by ownership:
 
-Current status: **30 passed, 13 skipped** (the API suite awaits Member 2).
+- **Data-layer tests** — seed integrity, crowd banding, the demo contrast between
+  21A and 7B, simulator movement and geometry, and that a bus wraps back around
+  instead of freezing at the terminus.
+- **API contract tests** — health, routes, stops, tracking, the planner, crowd
+  override, dashboard and the WebSocket, asserted against `api_contract.yaml`.
+
+The API tests **fail loudly** if `database/main.py` cannot be imported. They used
+to *skip* in that situation, which quietly turned 13 broken endpoints into 13
+"passing" skips, so a missing app is now a hard error.
+
+Current status: **45 passed**.
 
 ## 🗺️ Roadmap
 
@@ -328,23 +362,30 @@ Current status: **30 passed, 13 skipped** (the API suite awaits Member 2).
 - [x] Database schema, seed data, segment statistics
 - [x] Bus movement simulator with crowd generation
 - [x] API contract and test suite
-- [ ] FastAPI application with live tracking endpoints
-- [ ] Journey planner returning ranked, crowd-aware options
-- [ ] ETA prediction service on top of `segment_stat`
-- [ ] Crowd estimation and classification
+- [x] FastAPI application with live tracking endpoints
+- [x] Journey planner returning ranked, crowd-aware options
+- [x] ETA prediction on top of `segment_stat` historical timings
+- [x] Crowd estimation and classification (`LOW` / `MED` / `HIGH`)
 - [ ] React frontend: map, planner, dashboard
-- [ ] WebSocket position streaming
-- [ ] Docker + CI
+- [x] WebSocket position streaming
+- [x] Docker
 
 ## 👥 Team
 
 | Member | Branch | Folder | Responsibility |
 |--------|--------|--------|----------------|
-| 1 | `member1-backend` | `backend/` | Bus tracking, ETA prediction, crowd services |
-| 2 | `member2-database` | `database/` | FastAPI backend, planner, dashboard |
+| 1 | `member1-backend` | merged into `database/` | Bus tracking, ETA and crowd service design (see integration notes) |
+| 2 | `member2-database` | `database/` | FastAPI app, routers, WebSocket |
 | 3 | `member3-frontend` | `frontend/` | React passenger app |
 | 4 | `member4-simulation_ml` | `simulation_ml/` | Database, seed data, simulator |
-| 5 | `member5-tests_docs` | `tests_docs/` | API contract, tests, CI, docs, deployment |
+| 5 | `member5-tests_docs` | `tests_docs/`, `database/` | API contract, tests, CI, docs, deployment, integration |
+
+M1 and M2 each shipped a complete FastAPI app with its own schema. During
+integration only one app was kept — M2's `database/` — because its router layout
+matched the agreed contract. M1's endpoint logic was folded into
+`database/services/`, and `backend/` was removed so there is a single app to run
+and a single set of tables to reason about. `tests_docs/docs/INTEGRATION_REVIEW.md`
+records what was kept, what was dropped, and why.
 
 ## 🤝 Contributing
 

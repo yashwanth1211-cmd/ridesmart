@@ -24,9 +24,9 @@ services:
     volumes:
       # keeps the seeded DB across container restarts
       - ridesmart_data:/data
-      # live reload for Member 2's code
+      # live reload while developing
       - ./database:/app/database
-      - ./backend:/app/backend
+      - ./simulation_ml:/app/simulation_ml
     restart: unless-stopped
 
 volumes:

@@ -1,57 +1,55 @@
-from fastapi import APIRouter, HTTPException
+"""Trip ETA and crowd override endpoints.
 
-from database.schemas.trip import TripETA, CrowdUpdate
+OWNER: Member 5 (integration). Replaces Member 2's hardcoded TRIPS dict.
+"""
 
+from __future__ import annotations
 
-router = APIRouter(
-    prefix="/trips",
-    tags=["Trips"],
-)
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from database.core.database import get_db
+from database.schemas.trip import CrowdEstimate, CrowdUpdate, StopEta
+from database.services.planner import set_crowd, trip_etas
 
-TRIPS = {
-    "TRIP101": {
-        "trip_id": "TRIP101",
-        "eta_min": 15,
-        "eta_predicted_min": 17,
-        "delay_min": 2,
-        "passenger_count": 35,
-    },
-    "TRIP102": {
-        "trip_id": "TRIP102",
-        "eta_min": 22,
-        "eta_predicted_min": 24,
-        "delay_min": 2,
-        "passenger_count": 20,
-    },
-}
+router = APIRouter(prefix="/trips", tags=["Trips"])
 
 
-@router.get("/{trip_id}/eta", response_model=TripETA)
-def get_trip_eta(trip_id: str):
-
-    if trip_id not in TRIPS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Trip {trip_id} not found",
-        )
-
-    return TRIPS[trip_id]
+@router.get("/{trip_id}/eta", response_model=list[StopEta])
+def get_eta(trip_id: int, db: Session = Depends(get_db)):
+    """Predicted vs scheduled arrival at each stop, from observed travel times."""
+    rows = trip_etas(db, trip_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
+    return rows
 
 
-@router.put("/{trip_id}/crowd")
-def update_trip_crowd(trip_id: str, crowd: CrowdUpdate):
+@router.put("/{trip_id}/crowd", response_model=CrowdEstimate)
+def update_crowd(trip_id: int, payload: CrowdUpdate, db: Session = Depends(get_db)):
+    """Manually override a trip's crowd level.
 
-    if trip_id not in TRIPS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Trip {trip_id} not found",
-        )
+    This is the interactive demo step: set a bus to empty, re-plan the same
+    journey, and watch the ranking change.
+    """
+    from simulation_ml.db.models import Trip
 
-    TRIPS[trip_id]["passenger_count"] = crowd.passenger_count
+    trip = db.get(Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
 
-    return {
-        "trip_id": trip_id,
-        "passenger_count": crowd.passenger_count,
-        "message": "Crowd updated successfully",
-    }
+    try:
+        load, capacity = payload.resolved_load(trip.bus.capacity)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    result = set_crowd(
+        db,
+        trip_id=trip_id,
+        load=load,
+        capacity=capacity,
+        stop_id=payload.stop_id,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
+
+    return result

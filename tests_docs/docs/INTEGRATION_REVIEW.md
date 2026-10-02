@@ -233,3 +233,58 @@ problem is that **nobody merged before writing**, so the two apps are
 independent. That is recoverable in roughly 90 minutes of focused work, and the
 underlying pieces (M1's data layer, M2's app shell, my simulator and tests) are
 all good. The demo is still saveable, but P0 cannot be skipped.
+
+---
+
+## 9. Resolution — what was actually done
+
+All four blockers above are closed. M2's app won; M1's logic was folded into it.
+
+| # | Blocker | Resolution |
+|---|---------|------------|
+| 1 | Two competing backends | `database/main.py` is the single app. `backend/` and the empty `database/app/` skeleton were deleted. |
+| 2 | Never seeded at startup | `lifespan()` in `database/main.py` calls `init_db()`, which does `create_all` + `seed()`. |
+| 3 | Hardcoded API payloads | Every router now queries `simulation_ml/db/models.py`. No literal dicts remain in responses. |
+| 4 | Two incompatible schemas | `simulation_ml/db/models.py` (9 tables) is the only schema. M1's `buses`/`stops`/`routes` and M2's dict payloads are gone. |
+
+Also resolved:
+
+- **`/api` prefix decided: yes, everywhere.** Including the WebSocket, which is
+  `ws://host/api/ws/buses` and not a bare `/ws/buses`. Member 3 codes against
+  this. A test now asserts the WS path so it cannot silently drift again.
+- **Field names aligned to the contract**: `lat`/`lon` (not `latitude`/
+  `longitude`), `crowd_level` of `low`/`med`/`high` (not `LOW`/`MEDIUM`/`HIGH`),
+  and `{"from": ..., "to": ..., "options": [...]}` (not `{"origin", "destination", "plans"}`).
+- **Runtime deps split correctly.** `database/requirements.txt` is new. The API
+  dependencies used to exist only in `tests_docs/requirements.txt`, so
+  `docker/api.Dockerfile` installed the simulator's requirements and then tried
+  to run uvicorn, which was not among them.
+- **Docker entrypoint corrected** to `database.main:app`.
+- **The `TestClient` lifespan trap**: a bare `TestClient(app)` never runs
+  `lifespan`, so tables are never created and every query fails with
+  `no such table: route`. It must be used as `with TestClient(app) as c:`.
+- **`sys.path` off-by-one**: `database/core/database.py` used `parents[3]`, which
+  is the folder *containing* the repo, not the repo root. Now `parents[2]`.
+- **Buses froze at the terminus.** Progress was clamped with `min(1.0, ...)`, so
+  every bus stopped moving a few minutes into the demo and the map went static
+  exactly when someone was watching. Trips now turn around and run the route
+  again. Covered by `test_bus_wraps_instead_of_freezing`.
+- **Tests no longer skip on a missing app.** The fixture used to `pytest.skip`
+  when the FastAPI app could not be imported, which turned 13 broken endpoints
+  into 13 "passing" skips. A missing app is now a hard failure.
+
+### Verification
+
+- `pytest tests_docs/tests` → **45 passed**, 0 failed, 0 skipped.
+- Live check: API on port 8000, simulator writing via `--push`, positions
+  observed advancing on `/api/buses/active` *while the simulator wrote nothing to
+  the DB itself* — proving the HTTP ingest path works.
+- Planner returns 21A at 12 min vs 7B at 21 min, sorted by ETA, with the
+  accessibility filter and a clean 400 on an unknown stop.
+- WebSocket streams live positions at `/api/ws/buses`.
+
+### Still open
+
+- **`frontend/` is empty.** Member 3 has not started. It is now unblocked: the
+  contract is fixed and every endpoint returns data. This is the only remaining
+  risk to the demo.

@@ -1,59 +1,55 @@
-from fastapi import APIRouter, HTTPException
+"""Crowd-aware route planning.
 
-from database.schemas.planning import (
-    RoutePlanRequest,
-    RoutePlanResponse,
-)
+OWNER: Member 5 (integration).
+
+The standout feature. Returns MULTIPLE ranked options, each with a predicted ETA
+and a crowd level, so the passenger can weigh speed against comfort.
+
+Returning a single option would defeat the purpose.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from database.core.database import get_db
+from database.schemas.planning import PlanRequest, PlanResponse
+from database.services.planner import plan_journey
+
+router = APIRouter(prefix="/routes", tags=["Route Planning"])
 
 
-router = APIRouter(
-    prefix="/routes",
-    tags=["Route Planning"],
-)
+@router.post("/plan", response_model=PlanResponse)
+def plan(request: PlanRequest, db: Session = Depends(get_db)):
+    from_code = request.from_.strip()
+    to_code = request.to.strip()
 
-
-@router.post("/plan", response_model=RoutePlanResponse)
-def plan_route(request: RoutePlanRequest):
-
-    if not request.origin.strip():
+    if not from_code or not to_code:
         raise HTTPException(
             status_code=400,
-            detail="Origin cannot be empty",
+            detail="from and to are required",
+            headers={"X-Code": "missing_stops"},
         )
 
-    if not request.destination.strip():
+    result = plan_journey(
+        db,
+        from_code=from_code,
+        to_code=to_code,
+        accessibility_only=request.accessibility_only,
+    )
+
+    if result is None:
         raise HTTPException(
             status_code=400,
-            detail="Destination cannot be empty",
+            detail=f"Unknown stop code: {from_code if from_code not in _codes(db) else to_code}",
+            headers={"X-Code": "unknown_stop"},
         )
 
-    return {
-        "candidates": [
-            {
-                "route_id": "21A",
-                "eta_min": 18,
-                "eta_predicted_min": 20,
-                "delay_min": 2,
-                "crowding_level": "medium",
-                "crowding_reason": "Moderate passenger demand",
-                "path_stops": [
-                    "Central Station",
-                    "City Market",
-                    "Airport",
-                ],
-            },
-            {
-                "route_id": "7A",
-                "eta_min": 25,
-                "eta_predicted_min": 27,
-                "delay_min": 2,
-                "crowding_level": "low",
-                "crowding_reason": "Low passenger demand",
-                "path_stops": [
-                    "Central Station",
-                    "Railway Station",
-                    "Airport",
-                ],
-            },
-        ]
-    }
+    return result
+
+
+def _codes(db: Session) -> set[str]:
+    from simulation_ml.db.models import Stop
+
+    return {s.code for s in db.query(Stop).all()}
