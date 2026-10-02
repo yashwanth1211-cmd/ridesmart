@@ -210,6 +210,24 @@
   animation: shimmer 1.4s linear infinite;
 }
 
+/*
+  The console fades in once the video intro hands off, and the intro fades out
+  over the same 700ms, so the end of the video runs straight into the live
+  dashboard without a cut.
+*/
+@keyframes rs-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.rs-fade-in {
+  animation: rs-fade-in 0.7s ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;

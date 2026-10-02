@@ -8,7 +8,7 @@ import Dashboard from '@/components/ui/Dashboard'
  */
 export default function Console() {
   return (
-    <div className="h-dvh w-full overflow-hidden bg-canvas">
+    <div className="rs-fade-in h-dvh w-full overflow-hidden bg-canvas">
       <Dashboard />
     </div>
   )
