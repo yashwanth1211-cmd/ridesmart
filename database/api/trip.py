@@ -5,10 +5,11 @@ OWNER: Member 5 (integration). Replaces Member 2's hardcoded TRIPS dict.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database.core.database import get_db
+from database.core.errors import ApiError
 from database.schemas.trip import CrowdEstimate, CrowdUpdate, StopEta
 from database.services.planner import set_crowd, trip_etas
 
@@ -20,7 +21,7 @@ def get_eta(trip_id: int, db: Session = Depends(get_db)):
     """Predicted vs scheduled arrival at each stop, from observed travel times."""
     rows = trip_etas(db, trip_id)
     if not rows:
-        raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
+        raise ApiError(status_code=404, detail=f"Trip {trip_id} not found", code="trip_not_found")
     return rows
 
 
@@ -35,12 +36,12 @@ def update_crowd(trip_id: int, payload: CrowdUpdate, db: Session = Depends(get_d
 
     trip = db.get(Trip, trip_id)
     if trip is None:
-        raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
+        raise ApiError(status_code=404, detail=f"Trip {trip_id} not found", code="trip_not_found")
 
     try:
         load, capacity = payload.resolved_load(trip.bus.capacity)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ApiError(status_code=400, detail=str(exc), code="invalid_crowd_level") from exc
 
     result = set_crowd(
         db,
@@ -50,6 +51,6 @@ def update_crowd(trip_id: int, payload: CrowdUpdate, db: Session = Depends(get_d
         stop_id=payload.stop_id,
     )
     if not result:
-        raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
+        raise ApiError(status_code=404, detail=f"Trip {trip_id} not found", code="trip_not_found")
 
     return result

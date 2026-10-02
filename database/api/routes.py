@@ -5,10 +5,11 @@ OWNER: Member 5 (integration). Replaces Member 2's hardcoded ROUTES list.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database.core.database import get_db
+from database.core.errors import ApiError
 from database.schemas.route import Route, RouteStop, RouteWithStops, Stop
 from database.services.tracking import all_stops
 from simulation_ml.db.models import Route as RouteModel
@@ -25,7 +26,7 @@ def list_routes(db: Session = Depends(get_db)):
 def get_route(route_id: int, db: Session = Depends(get_db)):
     route = db.get(RouteModel, route_id)
     if route is None:
-        raise HTTPException(status_code=404, detail=f"Route {route_id} not found")
+        raise ApiError(status_code=404, detail=f"Route {route_id} not found", code="route_not_found")
 
     payload = route.as_dict()
     payload["stops"] = [rs.as_dict() for rs in route.ordered_stops()]
@@ -36,7 +37,7 @@ def get_route(route_id: int, db: Session = Depends(get_db)):
 def get_route_stops(route_id: int, db: Session = Depends(get_db)):
     route = db.get(RouteModel, route_id)
     if route is None:
-        raise HTTPException(status_code=404, detail=f"Route {route_id} not found")
+        raise ApiError(status_code=404, detail=f"Route {route_id} not found", code="route_not_found")
 
     return [rs.as_dict() for rs in route.ordered_stops()]
 
