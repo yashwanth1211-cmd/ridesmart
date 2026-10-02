@@ -94,12 +94,16 @@ matters to them right now, and the system is honest about the cost of each choic
 
 ## 📸 Screenshots
 
-> Not committed yet. Capture these three views into `docs/img/` (uncomment the
-> `docs/img/*.png` line in `.gitignore` first) and the table below fills in:
->
-> | Passenger Planner | Live Map | Authority Dashboard |
-> |---|---|---|
-> | ![Planner](docs/img/planner.png) | ![Map](docs/img/map.png) | ![Dashboard](docs/img/dashboard.png) |
+Captured against the running stack (API + simulator + Vite dev server).
+
+| Journey planner | Live map | Authority dashboard |
+|---|---|---|
+| ![Planner](docs/img/planner.png) | ![Map](docs/img/map.png) | ![Dashboard](docs/img/dashboard.png) |
+
+The planner shot is the live `/app` console with a real plan returned by
+`POST /api/routes/plan` (options sorted by ETA), the map shot has bus positions
+arrived over the `/api/ws/buses` WebSocket, and the dashboard shot is fed by
+`GET /api/authority/dashboard`.
 
 ## 🏗️ Architecture
 
@@ -370,8 +374,8 @@ Current status: **45 passed**.
 - [x] React frontend: map, planner, dashboard
 - [x] WebSocket position streaming
 - [x] Docker (API)
-- [ ] Screenshots in this README
-- [ ] CI workflow
+- [x] Screenshots in this README
+- [x] CI workflow
 
 ## 👥 Team
 

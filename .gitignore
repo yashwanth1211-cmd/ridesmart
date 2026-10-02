@@ -41,6 +41,6 @@ api.err
 sim.log
 sim.err
 
-# Screenshots referenced by the README - add real files under docs/img/ and
-# commit those instead. Uncomment when real captures land.
-# docs/img/*.png
+# Screenshots referenced by the README are committed on purpose - the captures
+# under docs/img/ are generated from a running stack, but reviewers need to see
+# the UI without starting it. Do NOT re-add an ignore rule here.
