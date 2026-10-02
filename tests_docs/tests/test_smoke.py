@@ -141,6 +141,19 @@ class TestTracking:
             assert -90 <= bus["lat"] <= 90
             assert -180 <= bus["lon"] <= 180
 
+    def test_websocket_stream_uses_the_contract_path(self, client):
+        """The WS must live at /api/ws/buses, not a bare /ws/buses.
+
+        Member 3 hardcodes this URL, so a silent prefix drift here would leave
+        the live map empty in the demo with no test complaining.
+        """
+        with client.websocket_connect("/api/ws/buses") as ws:
+            payload = ws.receive_json()
+
+        assert isinstance(payload, list), "contract says it mirrors BusPosition[]"
+        assert len(payload) >= 1
+        assert {"bus_id", "lat", "lon", "ts"} <= payload[0].keys()
+
 
 class TestPlanner:
     """THE demo-critical tests."""

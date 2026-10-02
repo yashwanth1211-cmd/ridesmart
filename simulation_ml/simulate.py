@@ -166,7 +166,6 @@ class TripSimulator:
         frac = self.progress * span
         i = min(int(frac), span - 1)
         return self.stops[i], self.stops[i + 1], frac - i
-
     def current_speed(self) -> float:
         """Jittered speed so ETA never matches the timetable exactly."""
         base = 26.0
@@ -174,7 +173,12 @@ class TripSimulator:
 
     # -- main step --------------------------------------------------------
     def step(self, dt_sec: float) -> dict:
-        """Advance the trip by dt_sec of SIMULATED time, return a telemetry dict."""
+        """Advance the trip by dt_sec of SIMULATED time, return a telemetry dict.
+
+        A bus that reaches the terminus wraps back to the first stop instead of
+        freezing at 100%. Without this the map goes static a few minutes into
+        the demo, which is exactly when someone is watching.
+        """
         self.elapsed_sec += dt_sec
 
         from_stop, to_stop, t = self.current_pair()
@@ -188,7 +192,17 @@ class TripSimulator:
         seg_sec = (seg_km / max(speed, 1.0)) * 3600.0
 
         if seg_sec > 0:
-            self.progress = min(1.0, self.progress + (dt_sec / seg_sec) / (len(self.stops) - 1))
+            self.progress += (dt_sec / seg_sec) / (len(self.stops) - 1)
+
+        # wrap: the bus turns around and runs the route again
+        if self.progress >= 1.0:
+            self.progress = 0.0
+            self.last_stop_seq = 0
+            self.boarded = self.rng.randint(4, max(4, int(self.capacity * 0.4)))
+            self.crowd_profile = [
+                self.rng.randint(0, self.capacity) for _ in self.stops
+            ]
+            from_stop, to_stop, t = self.current_pair()
 
         lat, lon = interpolate(from_stop, to_stop, t)
         heading = bearing_deg(from_stop.lat, from_stop.lon, to_stop.lat, to_stop.lon)

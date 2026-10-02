@@ -95,6 +95,21 @@ class TestSimulatorMovement:
         for _ in range(50):
             assert sim.step(30.0)["seq_progress"] <= 1.0
 
+    def test_bus_wraps_instead_of_freezing(self, session):
+        """A bus that stops at the terminus leaves the map static.
+
+        The simulator therefore turns the bus around and runs the route again,
+        so the demo never goes dead while someone is watching.
+        """
+        sim = self._sim(session, speed=300.0)
+        values = [sim.step(30.0)["seq_progress"] for _ in range(150)]
+
+        assert all(0.0 <= v <= 1.0 for v in values)
+        assert any(b < a for a, b in zip(values, values[1:])), (
+            "progress never decreased, so the bus froze at the terminus"
+        )
+        assert values[-1] < 0.5, "the bus should be mid-route again after wrapping"
+
     def test_speed_varies_between_ticks(self, session):
         """If speed were constant, ETA would exactly match the timetable and
         the delay feature would have nothing to show."""

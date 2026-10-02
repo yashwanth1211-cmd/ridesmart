@@ -1,0 +1,14 @@
+# Runtime dependencies for the RideSmart API.
+#
+# The API, the simulator and the tests all share one schema in simulation_ml/db,
+# so the storage/simulation deps are inherited from there and only the web
+# server layer is added here. Previously these lived only in
+# tests_docs/requirements.txt, which meant `docker/api.Dockerfile` installed the
+# simulator requirements and then tried to start uvicorn - which is not in them.
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.6.0
+websockets>=12.0
+sqlalchemy>=2.0.30
+python-dateutil>=2.8.2
+python-dotenv>=1.0.0

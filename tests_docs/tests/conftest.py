@@ -51,7 +51,12 @@ def session(seeded_db):
 
 @pytest.fixture()
 def client(seeded_db, monkeypatch):
-    """FastAPI TestClient, or skip if Member 2's app is not importable yet."""
+    """FastAPI TestClient wired to the temporary SQLite database.
+
+    Deliberately does NOT skip when the app is missing. An earlier version
+    skipped, which quietly turned 13 broken endpoints into 13 "passing" skips.
+    A missing app is a real failure now.
+    """
     monkeypatch.setenv("DATABASE_URL", seeded_db)
 
     # reset the cached engine so the app picks up the temp DB
@@ -59,29 +64,21 @@ def client(seeded_db, monkeypatch):
     m._SessionLocal = None
 
     app = None
-    try:
-        from database.app.main import app as fastapi_app  # type: ignore
-
-        app = fastapi_app
-    except Exception:
-        for candidate in (
-            "database.main:app",
-            "database.app:app",
-            "backend.main:app",
-            "backend.app.main:app",
-        ):
-            mod_path, _, attr = candidate.partition(":")
-            try:
-                module = __import__(mod_path, fromlist=[attr])
-                app = getattr(module, attr)
-                break
-            except Exception:
-                continue
+    errors = []
+    for candidate in ("database.main:app", "database.app:app", "backend.main:app"):
+        mod_path, _, attr = candidate.partition(":")
+        try:
+            module = __import__(mod_path, fromlist=[attr])
+            app = getattr(module, attr)
+            break
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc!r}")
 
     if app is None:
-        pytest.skip(
-            "FastAPI app not found yet. Expected database/app/main.py to expose `app` "
-            "(Member 2). Non-API tests still run."
+        pytest.fail(
+            "could not import the FastAPI app `app`. Tried:\n  "
+            + "\n  ".join(errors)
+            + "\nExpected database/main.py to expose `app`."
         )
 
     from fastapi.testclient import TestClient

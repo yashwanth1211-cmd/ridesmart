@@ -1,86 +1,50 @@
-from fastapi import APIRouter, HTTPException
+"""Route and stop endpoints.
 
-from database.schemas.route import Route, Stop
+OWNER: Member 5 (integration). Replaces Member 2's hardcoded ROUTES list.
+"""
 
+from __future__ import annotations
 
-router = APIRouter(
-    prefix="/routes",
-    tags=["Routes"],
-)
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from database.core.database import get_db
+from database.schemas.route import Route, RouteStop, RouteWithStops, Stop
+from database.services.tracking import all_stops
+from simulation_ml.db.models import Route as RouteModel
 
-ROUTES = [
-    {
-        "route_id": "21A",
-        "name": "Central Station - Airport",
-        "stops": [
-            {
-                "stop_id": "S101",
-                "name": "Central Station",
-                "latitude": 12.9716,
-                "longitude": 77.5946,
-            },
-            {
-                "stop_id": "S102",
-                "name": "City Market",
-                "latitude": 12.9650,
-                "longitude": 77.5900,
-            },
-            {
-                "stop_id": "S103",
-                "name": "Airport",
-                "latitude": 13.1986,
-                "longitude": 77.7066,
-            },
-        ],
-    },
-    {
-        "route_id": "7A",
-        "name": "Railway Station - Tech Park",
-        "stops": [
-            {
-                "stop_id": "S201",
-                "name": "Railway Station",
-                "latitude": 12.9750,
-                "longitude": 77.6000,
-            },
-            {
-                "stop_id": "S202",
-                "name": "Tech Park",
-                "latitude": 12.9300,
-                "longitude": 77.6800,
-            },
-        ],
-    },
-]
+router = APIRouter(prefix="/routes", tags=["Routes"])
 
 
 @router.get("", response_model=list[Route])
-def get_routes():
-    return ROUTES
+def list_routes(db: Session = Depends(get_db)):
+    return [r.as_dict() for r in db.query(RouteModel).order_by(RouteModel.id).all()]
 
 
-@router.get("/{route_id}", response_model=Route)
-def get_route(route_id: str):
+@router.get("/{route_id}", response_model=RouteWithStops)
+def get_route(route_id: int, db: Session = Depends(get_db)):
+    route = db.get(RouteModel, route_id)
+    if route is None:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found")
 
-    for route in ROUTES:
-        if route["route_id"] == route_id:
-            return route
-
-    raise HTTPException(
-        status_code=404,
-        detail=f"Route {route_id} not found",
-    )
+    payload = route.as_dict()
+    payload["stops"] = [rs.as_dict() for rs in route.ordered_stops()]
+    return payload
 
 
-@router.get("/{route_id}/stops", response_model=list[Stop])
-def get_route_stops(route_id: str):
+@router.get("/{route_id}/stops", response_model=list[RouteStop])
+def get_route_stops(route_id: int, db: Session = Depends(get_db)):
+    route = db.get(RouteModel, route_id)
+    if route is None:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found")
 
-    for route in ROUTES:
-        if route["route_id"] == route_id:
-            return route["stops"]
+    return [rs.as_dict() for rs in route.ordered_stops()]
 
-    raise HTTPException(
-        status_code=404,
-        detail=f"Route {route_id} not found",
-    )
+
+stops_router = APIRouter(tags=["Stops"])
+
+
+@stops_router.get("/stops", response_model=list[Stop])
+def list_stops(db: Session = Depends(get_db)):
+    """All stops, for the planner's from/to pickers."""
+    return all_stops(db)
