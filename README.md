@@ -94,11 +94,12 @@ matters to them right now, and the system is honest about the cost of each choic
 
 ## 📸 Screenshots
 
-> Placeholders — Member 3 to drop real captures here.
-
-| Passenger Planner | Live Map | Authority Dashboard |
-|---|---|---|
-| ![Planner](docs/img/planner.png) | ![Map](docs/img/map.png) | ![Dashboard](docs/img/dashboard.png) |
+> Not committed yet. Capture these three views into `docs/img/` (uncomment the
+> `docs/img/*.png` line in `.gitignore` first) and the table below fills in:
+>
+> | Passenger Planner | Live Map | Authority Dashboard |
+> |---|---|---|
+> | ![Planner](docs/img/planner.png) | ![Map](docs/img/map.png) | ![Dashboard](docs/img/dashboard.png) |
 
 ## 🏗️ Architecture
 
@@ -366,9 +367,11 @@ Current status: **45 passed**.
 - [x] Journey planner returning ranked, crowd-aware options
 - [x] ETA prediction on top of `segment_stat` historical timings
 - [x] Crowd estimation and classification (`LOW` / `MED` / `HIGH`)
-- [ ] React frontend: map, planner, dashboard
+- [x] React frontend: map, planner, dashboard
 - [x] WebSocket position streaming
-- [x] Docker
+- [x] Docker (API)
+- [ ] Screenshots in this README
+- [ ] CI workflow
 
 ## 👥 Team
 
