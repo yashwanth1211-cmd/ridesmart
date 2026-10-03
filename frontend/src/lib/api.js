@@ -35,7 +35,7 @@
  *   GET  /api/routes              -> [{ id, code, name, direction, stop_count }]
  *   GET  /api/routes/{id}         -> Route & { stops: RouteStop[] }
  *   GET  /api/routes/{id}/stops   -> [{ seq, scheduled_offset_sec, stop }]
- *   GET  /api/stops               -> [{ id, code, name, lat, lon, accessible }]
+ *   GET  /api/stops               -> [{ id, code, name, lat, lon, accessible, kind }]
  *   POST /api/routes/plan         -> { from, to, generated_at, options[] }
  *   GET  /api/buses/active        -> [BusPosition]     (poll fallback, ~2s)
  *   GET  /api/buses/{id}/location -> BusPosition
@@ -160,6 +160,10 @@ export function mapStop(entry) {
     lat: lat(entry),
     lon: lon(entry),
     accessible: Boolean(entry.accessible),
+    // 'transit' is a surveyed OSM bus stop/station; 'campus' is a landmark
+    // anchor (Kingston Engineering College) where no bay was mapped. Default
+    // to 'transit' so a payload from an older backend still reads correctly.
+    kind: entry.kind === 'campus' ? 'campus' : 'transit',
   }
 }
 

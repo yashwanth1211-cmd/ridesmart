@@ -11,7 +11,7 @@
  * chaining, so an undefined import.meta.env in Node resolves to '' rather than
  * throwing.
  */
-import { mapOption, mapPlan, normalizeCrowd, normalizeEta, normalizeDelay } from './src/lib/api.js'
+import { mapOption, mapPlan, mapStop, normalizeCrowd, normalizeEta, normalizeDelay } from './src/lib/api.js'
 
 let pass = 0, fail = 0
 const failures = []
@@ -21,6 +21,18 @@ const check = (n, c, d) => {
 }
 
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+console.log('\n== stop kind: transit vs campus anchor ==')
+{
+  const base = { id: 1, code: 'STOP_VIT', name: 'VIT', lat: 12.968142, lon: 79.156252, accessible: true }
+  check('missing kind defaults to transit', mapStop(base).kind === 'transit', mapStop(base).kind)
+  check('explicit transit stays transit', mapStop({ ...base, kind: 'transit' }).kind === 'transit', '')
+  check('campus is preserved', mapStop({ ...base, kind: 'campus' }).kind === 'campus', mapStop({ ...base, kind: 'campus' }).kind)
+  // An unknown value must not become 'campus', or a typo silently relabels a
+  // surveyed stop as a guess.
+  check('unknown kind is not promoted to campus', mapStop({ ...base, kind: 'campus-ish' }).kind === 'transit', mapStop({ ...base, kind: 'campus-ish' }).kind)
+  check('lat/lon still mapped', mapStop(base).lat === 12.968142 && mapStop(base).lon === 79.156252, '')
+}
 
 console.log('\n== prediction: absent means absent ==')
 {

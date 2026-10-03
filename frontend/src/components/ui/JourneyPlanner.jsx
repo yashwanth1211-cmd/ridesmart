@@ -45,7 +45,10 @@ function StopSelect({ label, value, stops, onChange, id }) {
         {stops.length === 0 && <option value={value}>{value}</option>}
         {stops.map((stop) => (
           <option key={stop.code} value={stop.code} className="bg-gray-900">
+            {/* A campus anchor is a real place but not a surveyed bus bay, so
+                say so in the picker rather than implying we mapped one. */}
             {stop.name}
+            {stop.kind === 'campus' ? ' (campus stop)' : ''}
           </option>
         ))}
       </select>

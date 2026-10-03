@@ -100,7 +100,14 @@ def crowd_level_for(load: int, capacity: int) -> str:
 # --------------------------------------------------------------------------
 
 class Stop(Base):
-    """A physical bus stop."""
+    """A physical bus stop.
+
+    `kind` distinguishes a stop OSM actually maps as transit from one we placed
+    at a landmark because nothing better was surveyed. Kingston Engineering
+    College is the case in point: OSM has the college but no bus bay, so its pin
+    sits at the campus. Marking that honestly is the whole point - a campus
+    anchor presented as a surveyed bus stop is a small lie the map cannot show.
+    """
 
     __tablename__ = "stop"
 
@@ -110,6 +117,7 @@ class Stop(Base):
     lat: Mapped[float] = mapped_column(Float, nullable=False)
     lon: Mapped[float] = mapped_column(Float, nullable=False)
     accessible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), default="transit", nullable=False)
 
     route_stops: Mapped[list["RouteStop"]] = relationship(back_populates="stop")
 
@@ -121,6 +129,7 @@ class Stop(Base):
             "lat": self.lat,
             "lon": self.lon,
             "accessible": bool(self.accessible),
+            "kind": self.kind,
         }
 
 

@@ -42,15 +42,16 @@ export const CROWD_THRESHOLDS = { low: 0.4, high: 0.75 }
 // ---------------------------------------------------------------------------
 
 /**
- * Seed data is the real Vellore - Katpadi corridor in Tamil Nadu (~12.92N,
- * 79.14E) - see simulation_ml/data/real_routes.json - so the map opens on the
- * city the buses are actually driving through rather than on [0, 0] in the
- * ocean. Centred between VIT (north-east) and Bagayam / Christian Medical
- * College (south), which is the span all three routes cover.
+ * Seed data is the real Vellore - Katpadi corridor in Tamil Nadu, running from
+ * Kingston Engineering College (13.01N) in the north down to Bagayam (12.88N)
+ * in the south - see simulation_ml/data/real_routes.json. Centred on the middle
+ * of that span so the map opens on the whole network rather than on [0, 0] in
+ * the ocean. LiveMap fitBounds the selected route once its shape loads, so this
+ * is only the pre-fit fallback.
  */
 export const MAP_DEFAULTS = {
-  center: [12.9333, 79.1389],
-  zoom: 12.9,
+  center: [12.9461, 79.1404],
+  zoom: 12.4,
   minZoom: 10,
   maxZoom: 18,
 }

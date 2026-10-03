@@ -11,19 +11,19 @@ Re-run only when the route layout changes:  python simulation_ml/tools/build_rea
 THE CORRIDOR
 ------------
 Vellore town and Katpadi are ~7 km apart, not the ~30 km that a naive reading of
-"Katpadi" suggests. OSM places:
+"Katpadi" suggests. The network runs north-east to south-west down one arterial:
 
-    Katpadi      (suburb)        12.97556, 79.13577
+    Kingston Engineering College   13.01236, 79.13409   campus anchor, see CAMPUS
     VIT                          12.96814, 79.15625
     Katpadi Junction bus stand   12.96626, 79.13749
+    TNEB                         12.95659, 79.14179
     Vellore (city centre)        12.90718, 79.13097
     Vellore Old Bus Stand        12.92215, 79.13252
 
-So the spine is a single north-south arterial: VIT in the north-east, down
-through Katpadi, Silk Mill and the town centre to Bagayam / Christian Medical
-College in the south. Every route below runs along that spine, which is why the
-demo journey (VIT -> Vellore Old Bus Stand) is shared by all three and the
-planner can offer a genuine choice.
+Every route below runs along that spine, which is why the demo journey (VIT ->
+Vellore Old Bus Stand) is shared by all three and the planner can offer a
+genuine choice. `*` in the build log marks a campus anchor rather than a
+surveyed transit stop.
 """
 import json
 import math
@@ -40,6 +40,7 @@ LANDMARKS = {
     "VIT": (12.96814, 79.15625),
     "KATPADI_JUNCTION": (12.96626, 79.13749),
     "ODAI_PILLAIYAR": (12.95865, 79.13718),
+    "TNEB": (12.95659, 79.14179),
     "AUXILIUM": (12.95847, 79.14162),
     "DKM": (12.95012, 79.14139),
     "SILK_MILL": (12.94979, 79.13719),
@@ -47,6 +48,8 @@ LANDMARKS = {
     "NATIONAL_THEATRE": (12.92883, 79.13384),
     "CMC_HOSPITAL": (12.92555, 79.13338),
     "VELLORE_OLD_BUS_STAND": (12.92215, 79.13252),
+    "VELLORE_TOWN": (12.92309, 79.12495),
+    "VELLORE_CANTONMENT": (12.91065, 79.12785),
     "RAJA_THEATRE": (12.91489, 79.13266),
     "VELAPPADI": (12.90531, 79.13578),
     "LAKSHMI_THEATRE": (12.90300, 79.13167),
@@ -58,40 +61,56 @@ LANDMARKS = {
     "CMC_CAMPUS": (12.87922, 79.13001),
 }
 
-# Comfortably contains every landmark above (lat 12.878-12.969, lon 79.130-79.157).
-BBOX = "12.86,79.10,13.00,79.20"
+# Campus anchors. These are places a bus genuinely terminates at, but OSM has no
+# transit node for them, so there is nothing to snap to. Each entry is the OSM
+# key of the real feature; the generator looks it up by name and uses its actual
+# coordinates, then records kind="campus" so nothing downstream claims it is a
+# surveyed bus bay.
+#
+# Kingston Engineering College is the case in point: OSM maps the college on
+# Chitoor main road (13.012, 79.134) but the nearest named bus stop is 4.2 km
+# away at Palloor. Snapping to Palloor would put the pin in the wrong place.
+CAMPUS = {
+    "KINGSTON_COLLEGE": "KINGSTON ENGINEERING COLLEGE",
+}
+
+# Comfortably contains every landmark above: lat 12.878-13.013, lon 79.124-79.157.
+BBOX = "12.86,79.10,13.06,79.20"
 
 # Codes, names and stop order are ours; coordinates and stop names are real.
 # The per-route speed / crowding contrast is deliberate - it is the demo's story.
 ROUTES = [
     {
         "code": "V1",
-        "name": "VIT - Bagayam",
+        "name": "Kingston - Bagayam",
         "crowd_bias": "medium",
         "stops": [
-            "VIT", "KATPADI_JUNCTION", "ODAI_PILLAIYAR", "SILK_MILL",
-            "CMC_HOSPITAL", "VELLORE_OLD_BUS_STAND", "RAJA_THEATRE",
-            "TOLLGATE", "BAGAYAM",
+            "KINGSTON_COLLEGE", "VIT", "KATPADI_JUNCTION", "TNEB",
+            "ODAI_PILLAIYAR", "SILK_MILL", "CMC_HOSPITAL",
+            "VELLORE_OLD_BUS_STAND", "VELLORE_TOWN", "VELLORE_CANTONMENT",
+            "RAJA_THEATRE", "TOLLGATE", "BAGAYAM",
         ],
     },
     {
         "code": "V2",
-        "name": "VIT - Otteri",
+        "name": "Kingston - Otteri",
         "crowd_bias": "low",
         "stops": [
-            "VIT", "KATPADI_JUNCTION", "AUXILIUM", "DKM", "KANGEYANALLUR",
-            "CMC_HOSPITAL", "VELLORE_OLD_BUS_STAND", "LAKSHMI_THEATRE",
-            "AGARAVARAM", "OTTERI",
+            "KINGSTON_COLLEGE", "VIT", "KATPADI_JUNCTION", "TNEB", "AUXILIUM",
+            "DKM", "KANGEYANALLUR", "CMC_HOSPITAL", "VELLORE_OLD_BUS_STAND",
+            "LAKSHMI_THEATRE", "AGARAVARAM", "OTTERI",
         ],
     },
     {
         "code": "M1",
-        "name": "VIT - Christian Medical College",
+        "name": "Kingston - Christian Medical College",
         "crowd_bias": "high",
         "stops": [
-            "VIT", "KATPADI_JUNCTION", "ODAI_PILLAIYAR", "SILK_MILL",
-            "NATIONAL_THEATRE", "VELLORE_OLD_BUS_STAND", "RAJA_THEATRE",
-            "VELAPPADI", "SANKARANPALAYAM", "OTTERI", "CMC_CAMPUS",
+            "KINGSTON_COLLEGE", "VIT", "KATPADI_JUNCTION", "TNEB",
+            "ODAI_PILLAIYAR", "SILK_MILL", "NATIONAL_THEATRE",
+            "VELLORE_OLD_BUS_STAND", "VELLORE_TOWN", "VELLORE_CANTONMENT",
+            "RAJA_THEATRE", "VELAPPADI", "SANKARANPALAYAM", "OTTERI",
+            "CMC_CAMPUS",
         ],
     },
 ]
@@ -192,10 +211,42 @@ for key, anchor in LANDMARKS.items():
         "name": best["tags"]["name"],
         "lat": round(best["lat"], 6),
         "lon": round(best["lon"], 6),
+        "kind": "transit",
     }
 
+# Campus anchors: look the real OSM feature up by name and use its own
+# coordinates. There is no transit node to snap to, which is exactly why these
+# are tracked separately.
+print(f"\nresolving {len(CAMPUS)} campus anchor(s)")
+for key, osm_name in CAMPUS.items():
+    res = overpass(
+        f'[out:json][timeout:240];nwr["name"="{osm_name}"]({BBOX});out center;'
+    )
+    hits = res.get("elements", [])
+    if not hits:
+        raise SystemExit(
+            f"{key}: no OSM feature named {osm_name!r} in {BBOX}. If it was "
+            f"renamed or moved, update CAMPUS/BBOX - do not fall back to a "
+            f"guessed coordinate."
+        )
+    if len(hits) > 1:
+        print(f"  note: {len(hits)} features named {osm_name!r}, using the first")
+    el = hits[0]
+    lat = el.get("lat") or el.get("center", {}).get("lat")
+    lon = el.get("lon") or el.get("center", {}).get("lon")
+    stops[key] = {
+        "code": f"STOP_{key}",
+        "name": el["tags"]["name"],
+        "lat": round(lat, 6),
+        "lon": round(lon, 6),
+        "kind": "campus",
+    }
+    print(f"  {key:<18} {osm_name} @ {lat:.5f},{lon:.5f}  (kind=campus)")
+
 used = {k for r in ROUTES for k in r["stops"]}
-print(f"\nusing {len(used)} stops across {len(ROUTES)} routes\n")
+n_campus = sum(1 for k in used if stops[k]["kind"] == "campus")
+print(f"\nusing {len(used)} stops across {len(ROUTES)} routes "
+      f"({n_campus} campus, {len(used) - n_campus} transit)\n")
 
 out_routes = []
 for r in ROUTES:
@@ -207,7 +258,8 @@ for r in ROUTES:
         coords = simplify(coords)
         legs.append({"coords": [[round(c[1], 6), round(c[0], 6)] for c in coords], "metres": round(dist, 1)})
         total_m += dist
-        print(f"  {r['code']}  {seq_stops[i]['name'][:26]:<26} -> {seq_stops[i+1]['name'][:26]:<26} {dist/1000:5.2f} km  ({len(coords)} pts)")
+        flag = lambda st: "*" if st["kind"] == "campus" else " "
+        print(f"  {r['code']}  {seq_stops[i]['name'][:24]:<24}{flag(seq_stops[i])} -> {seq_stops[i+1]['name'][:24]:<24}{flag(seq_stops[i+1])} {dist/1000:5.2f} km  ({len(coords)} pts)")
         time.sleep(1.1)  # be polite to the public OSRM demo server
     out_routes.append({
         "code": r["code"],

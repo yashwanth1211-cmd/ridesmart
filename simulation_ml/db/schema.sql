@@ -17,7 +17,12 @@ CREATE TABLE stop (
     name       VARCHAR(120) NOT NULL,
     lat        DOUBLE       NOT NULL,
     lon        DOUBLE       NOT NULL,
-    accessible BOOLEAN      NOT NULL DEFAULT 0
+    accessible BOOLEAN      NOT NULL DEFAULT 0,
+    -- 'transit' = OSM maps a real bus stop / bus station / station here.
+    -- 'campus'  = anchored at a landmark instead (e.g. Kingston Engineering
+    --             College, which OSM has no bus bay for). Kept honest in the
+    --             data so the UI can label it rather than imply it is surveyed.
+    kind       VARCHAR(16)  NOT NULL DEFAULT 'transit'
 );
 CREATE INDEX ix_stop_code ON stop (code);
 

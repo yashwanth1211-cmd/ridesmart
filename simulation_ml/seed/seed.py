@@ -9,33 +9,40 @@ WHY THIS DATA LOOKS THE WAY IT DOES
 -----------------------------------
 The demo is "crowd-aware route recommendations": the passenger sees three
 options between VIT and Vellore Old Bus Stand and picks between fast-but-packed
-and slow-but-empty. All three routes run the same real north-south spine
-(VIT -> Katpadi -> town centre), so they are genuine alternatives, and that
-contrast only works if the seed deliberately creates it:
+and slow-but-empty. All three routes run the same real spine (Kingston ->
+Katpadi -> town centre), so they are genuine alternatives, and that contrast
+only works if the seed deliberately creates it:
 
-    V1  fast  (22.8 min scheduled),  load 35/50 = 0.70 -> MED  yellow
-    M1  mid   (28.1 min scheduled),  load 52/60 = 0.87 -> HIGH red
-    V2  slow  (38.2 min scheduled),  load 12/50 = 0.24 -> LOW  green
+    V1  fast  (26 min scheduled),    load 35/50 = 0.70 -> MED  yellow
+    M1  mid   (32 min scheduled),    load 52/60 = 0.87 -> HIGH red
+    V2  slow  (40 min scheduled),    load 12/50 = 0.24 -> LOW  green
 
 V2 is slower AND empty, V1 is faster AND packed. Neither dominates, which is
 exactly the trade-off we want on screen.
 
 DATA IS REAL
 ------------
-The corridor is Vellore - Katpadi in Tamil Nadu. Stop names and coordinates come
-from OpenStreetMap via Overpass, and every route's polyline comes from the OSRM
-routing service. That geometry is stored in route_shape_point, so the simulator
-drives along real roads and the map draws the real route rather than straight
-lines between stop markers.
+The corridor is Vellore - Katpadi in Tamil Nadu, running from Kingston
+Engineering College in the north down to Bagayam and Christian Medical College
+in the south. Stop names and coordinates come from OpenStreetMap via Overpass,
+and every route's polyline comes from the OSRM routing service. That geometry is
+stored in route_shape_point, so the simulator drives along real roads and the map
+draws the real route rather than straight lines between stop markers.
+
+One stop is flagged kind="campus": Kingston Engineering College is a real place
+OSM maps precisely, but there is no bus bay mapped there - the nearest named
+bus stop is 4.2 km away at Palloor. Its pin sits at the college and is labelled
+as a campus stop rather than passed off as a surveyed bus stand.
 
 The result is committed to simulation_ml/data/real_routes.json by
 `python -m simulation_ml.tools.build_real_routes`, which means seeding makes no
 network calls and the demo runs offline.
 
 Note the contrasts above are measured on the DEMO JOURNEY (VIT -> Vellore Old
-Bus Stand), not on each route end to end. V2 is the longest route overall
-(16.3 km vs V1's 15.2 km); what matters is which gets the passenger there
-sooner, which is what the planner reports.
+Bus Stand), not on each route end to end. V2 is the shortest route overall
+(24.3 km vs V1's 28.1 km) but the slowest per km, so it is the longest in time;
+what matters is which gets the passenger there sooner, which is what the planner
+reports.
 """
 
 from __future__ import annotations
@@ -96,9 +103,9 @@ ROUTE_TIMETABLE_KMH = {
 # Observed / scheduled factor per leg: how much slower the road actually is.
 # Length must be (number of stops - 1); it is validated at load time.
 ROUTE_FACTORS = {
-    "V1": [1.02, 1.05, 1.10, 1.08, 1.25, 1.35, 1.20, 1.15],
-    "V2": [1.15, 1.30, 1.22, 1.28, 1.18, 1.35, 1.30, 1.25, 1.20],
-    "M1": [1.20, 1.40, 1.25, 1.18, 1.45, 1.22, 1.38, 1.28, 1.15, 1.30],
+    "V1": [1.02, 1.05, 1.10, 1.08, 1.25, 1.35, 1.20, 1.15, 1.22, 1.18, 1.28, 1.12],
+    "V2": [1.15, 1.30, 1.22, 1.28, 1.18, 1.35, 1.30, 1.25, 1.20, 1.26, 1.18],
+    "M1": [1.20, 1.40, 1.25, 1.18, 1.45, 1.22, 1.38, 1.28, 1.15, 1.30, 1.20, 1.26, 1.18, 1.24],
 }
 
 # Fraction of stops that are wheelchair accessible. Accessibility on the real
@@ -138,7 +145,7 @@ def _load_real_routes() -> tuple[dict, list[dict]]:
                 offset += r["legs"][i - 1]["metres"] / mps
             stops[st["code"]] = (
                 st["code"], st["name"], st["lat"], st["lon"],
-                st["code"] in _ACCESSIBLE_CODES,
+                st["code"] in _ACCESSIBLE_CODES, st.get("kind", "transit"),
             )
             stop_rows.append((st["code"], int(round(offset))))
 
@@ -154,6 +161,8 @@ def _load_real_routes() -> tuple[dict, list[dict]]:
 
     # A stop can appear on several routes (VIT is on all three), so collect
     # into a dict keyed by code and hand the seed a de-duplicated list of tuples.
+    # The kind is carried through rather than flattened: a campus anchor is not
+    # a surveyed bus bay, and the UI is told which is which.
     return list(stops.values()), specs
 
 
@@ -233,8 +242,8 @@ def seed(reset: bool = False, url: str | None = None) -> None:
 
         # ---- stops ------------------------------------------------------
         stop_by_code: dict[str, Stop] = {}
-        for code, name, lat, lon, accessible in STOPS:
-            st = Stop(code=code, name=name, lat=lat, lon=lon, accessible=accessible)
+        for code, name, lat, lon, accessible, kind in STOPS:
+            st = Stop(code=code, name=name, lat=lat, lon=lon, accessible=accessible, kind=kind)
             s.add(st)
             stop_by_code[code] = st
         s.flush()
@@ -390,6 +399,9 @@ def seed(reset: bool = False, url: str | None = None) -> None:
     print("\nSeed complete.")
     print("\n  Real Vellore - Katpadi data:")
     print(f"    {len(STOPS)} stops from OpenStreetMap, {sum(r['total_metres'] for r in json.loads(DATA_FILE.read_text(encoding='utf-8'))['routes']) / 1000:.0f} km of real road geometry (OSRM)")
+    campus = [code for code, _name, _lat, _lon, _acc, kind in STOPS if kind == "campus"]
+    if campus:
+        print(f"    campus anchor (not a surveyed bus bay): {', '.join(campus)}")
 
     print("\n  Demo story baked in:")
     crowd_note = {"V1": "MED  35/50", "V2": "LOW  12/50", "M1": "HIGH 52/60 - red band"}

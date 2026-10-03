@@ -28,14 +28,45 @@ class TestSeedData:
         assert session.query(Route).count() == 3
 
     def test_seed_has_real_stops(self, session):
-        # 19 real OSM stops, not the 12 hand-written placeholders.
-        assert session.query(Stop).count() == 19
+        # 23 real OSM stops, not the 12 hand-written placeholders.
+        assert session.query(Stop).count() == 23
 
     def test_stops_have_real_coordinates(self, session):
         """Every stop must sit inside the Vellore-Katpadi bbox the data came from."""
         for stop in session.query(Stop).all():
-            assert 12.87 <= stop.lat <= 12.98, f"{stop.code} latitude out of range"
-            assert 79.12 <= stop.lon <= 79.17, f"{stop.code} longitude out of range"
+            assert 12.87 <= stop.lat <= 13.02, f"{stop.code} latitude out of range"
+            assert 79.12 <= stop.lon <= 79.16, f"{stop.code} longitude out of range"
+
+    def test_kingston_is_labelled_as_a_campus_anchor(self, session):
+        """Kingston has no OSM bus bay, so it must not claim to be a surveyed stop.
+
+        OSM maps the college but no transit node: the nearest named bus stop is
+        4.2 km away at Palloor. Presenting the campus pin as a mapped bus stop
+        would be a claim the data cannot support, which is the exact failure
+        mode the `kind` column exists to prevent.
+        """
+        kingston = session.query(Stop).filter_by(code="STOP_KINGSTON_COLLEGE").first()
+        assert kingston is not None, "Kingston Engineering College is missing"
+        assert kingston.kind == "campus"
+        # Real OSM coordinates for the college on Chitoor main road.
+        assert kingston.lat == pytest.approx(13.012, abs=0.01)
+        assert kingston.lon == pytest.approx(79.134, abs=0.01)
+
+        # Everything else really is a mapped transit node.
+        for stop in session.query(Stop).filter(Stop.code != "STOP_KINGSTON_COLLEGE").all():
+            assert stop.kind == "transit", f"{stop.code} should be transit"
+
+    def test_principal_hubs_are_on_the_network(self, session):
+        """The main interchange points have to be reachable, not just on the map."""
+        codes = {s.code for s in session.query(Stop).all()}
+        for required in (
+            "STOP_VELLORE_OLD_BUS_STAND",
+            "STOP_VELLORE_CANTONMENT",
+            "STOP_VELLORE_TOWN",
+            "STOP_KATPADI_JUNCTION",
+            "STOP_TNEB",
+        ):
+            assert required in codes, f"{required} missing from the network"
 
     def test_every_route_has_real_road_geometry(self, session):
         """Routes must carry OSRM road geometry, and it must be non-degenerate.

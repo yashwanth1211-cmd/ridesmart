@@ -16,6 +16,9 @@ class Stop(BaseModel):
     lat: float
     lon: float
     accessible: bool
+    # 'transit' for a stop OSM maps as a real bus stop/station, 'campus' for one
+    # anchored at a landmark because no bay was surveyed there.
+    kind: str = "transit"
 
 
 class RouteStop(BaseModel):
