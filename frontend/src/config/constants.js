@@ -42,13 +42,15 @@ export const CROWD_THRESHOLDS = { low: 0.4, high: 0.75 }
 // ---------------------------------------------------------------------------
 
 /**
- * Seed data is a real Bengaluru corridor (~12.97N, 77.59E) - see
- * simulation_ml/seed/seed.py - so the map opens on the city the buses are
- * actually driving through rather than on [0, 0] in the ocean.
+ * Seed data is the real Vellore - Katpadi corridor in Tamil Nadu (~12.92N,
+ * 79.14E) - see simulation_ml/data/real_routes.json - so the map opens on the
+ * city the buses are actually driving through rather than on [0, 0] in the
+ * ocean. Centred between VIT (north-east) and Bagayam / Christian Medical
+ * College (south), which is the span all three routes cover.
  */
 export const MAP_DEFAULTS = {
-  center: [12.9745, 77.5946],
-  zoom: 12.4,
+  center: [12.9333, 79.1389],
+  zoom: 12.9,
   minZoom: 10,
   maxZoom: 18,
 }
@@ -75,5 +77,5 @@ export const MAP_STYLE = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 }
 
-/** Journey planned on first load, matching the seed's deliberate 21A vs 7B contrast. */
-export const DEFAULT_JOURNEY = { from: 'STOP_RAJAJINAGAR', to: 'STOP_MAJESTIC' }
+/** Journey planned on first load, matching the seed's deliberate V1 vs V2 contrast. */
+export const DEFAULT_JOURNEY = { from: 'STOP_VIT', to: 'STOP_VELLORE_OLD_BUS_STAND' }

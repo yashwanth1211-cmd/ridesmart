@@ -30,12 +30,12 @@ from simulation_ml.simulate import (
 
 class TestGeometry:
     def test_haversine_zero_for_same_point(self):
-        assert haversine_km(12.97, 77.59, 12.97, 77.59) == pytest.approx(0.0)
+        assert haversine_km(12.93, 79.13, 12.93, 79.13) == pytest.approx(0.0)
 
     def test_haversine_known_distance(self):
-        # Bengaluru -> Mysuru, great-circle distance is ~128 km
-        d = haversine_km(12.9716, 77.5946, 12.2958, 76.6394)
-        assert 125 < d < 131
+        # Vellore -> Katpadi, great-circle distance is ~7.5 km
+        d = haversine_km(12.90718, 79.13097, 12.97556, 79.13577)
+        assert 7.0 < d < 8.0
 
     def test_bearing_is_in_range(self):
         b = bearing_deg(12.9716, 77.5946, 12.9795, 77.5568)
@@ -48,7 +48,7 @@ class TestGeometry:
         assert interpolate(a, b, 0.5) == pytest.approx((12.5, 77.5))
 
 
-def build_sim(session, route_code="21A", speed=5.0):
+def build_sim(session, route_code="V1", speed=5.0):
     """Build a simulator for a seeded trip. Must run while the session is open
     so the stop snapshot is eager, otherwise the first tick raises
     DetachedInstanceError."""
@@ -64,7 +64,7 @@ def build_sim(session, route_code="21A", speed=5.0):
 class TestSimulatorMovement:
     """The core of the live-tracking demo."""
 
-    def _sim(self, session, route_code="21A", speed=5.0):
+    def _sim(self, session, route_code="V1", speed=5.0):
         return build_sim(session, route_code, speed)
 
     def test_ticks_are_produced(self, session):
@@ -115,10 +115,10 @@ class TestSimulatorMovement:
         so the demo never goes dead while someone is watching.
         """
         sim = self._sim(session, speed=300.0)
-        assert sim.path is not None, "21A must carry real road geometry"
+        assert sim.path is not None, "V1 must carry real road geometry"
 
         # Derive the tick budget from the route's real length instead of
-        # hardcoding one. 21A is 51.6 km of actual road, where the old
+        # hardcoding one. V1 is 15.2 km of actual road, where the old
         # hand-written route was a few km, so a fixed tick count now stops
         # short of the terminus and quietly stops testing the wrap at all.
         # Budgeted against the SLOWEST possible tick (4 km/h floor) so the two
@@ -223,7 +223,7 @@ class TestSimulatorWritesTelemetry:
             json=[
                 {
                     "bus_id": 1, "trip_id": 1, "route_id": 1,
-                    "lat": 12.9716, "lon": 77.5946,
+                    "lat": 12.9333, "lon": 79.1389,
                     "speed_kmph": 24.0, "heading": 90.0, "seq_progress": 0.1,
                     "ts": "2026-01-01T10:00:00+00:00",
                 }

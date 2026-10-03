@@ -504,30 +504,35 @@ export function busSocketUrl() {
  * The seed data's headline story, hardcoded so the planner still demonstrates
  * the speed-vs-crowd trade-off with the API stopped. These numbers are copied
  * from simulation_ml/seed/seed.py and are labelled as demo data in the UI.
+ *
+ * `score` mirrors planner.py: W_ETA * eta_min + W_CROWD * (ratio * 100), with
+ * W_ETA = 1.0, W_CROWD = 0.6 and LOWER being better. V2 (41 min, empty) scores
+ * 55.4 and beats V1 (24 min, packed) at 66.0, which is the whole point: crowd
+ * flips the ranking when the two are close enough in time.
  */
 export const DEMO_PLAN = {
   origin: {
     id: 1,
-    code: 'STOP_RAJAJINAGAR',
-    name: 'ESI Hospital Rajajinagara (Towards Navarang)',
-    lat: 12.991236,
-    lon: 77.552485,
+    code: 'STOP_VIT',
+    name: 'VIT',
+    lat: 12.96814,
+    lon: 79.15625,
   },
   destination: {
     id: 2,
-    code: 'STOP_MAJESTIC',
-    name: 'Railway Station, Majestic',
-    lat: 12.977507,
-    lon: 77.570768,
+    code: 'STOP_VELLORE_OLD_BUS_STAND',
+    name: 'Vellore Old Bus Stand',
+    lat: 12.92215,
+    lon: 79.13252,
   },
   options: [
     {
       id: 'route-1',
       routeId: 1,
-      code: '21A',
-      name: 'Rajajinagar - Electronic City',
-      etaMin: 10,
-      etaScheduledMin: 9,
+      code: 'V1',
+      name: 'VIT - Bagayam',
+      etaMin: 24,
+      etaScheduledMin: 23,
       delayMin: 1,
       crowd: 'medium',
       load: 35,
@@ -535,22 +540,22 @@ export const DEMO_PLAN = {
       ratio: 0.7,
       wheelchair: true,
       lowFloor: true,
-      score: 52.0,
+      score: 66.0,
       // Same shape mapOption() produces, so components can rely on the key
       // existing. Null means "no model metadata", never a zeroed-out stand-in.
       prediction: null,
       stops: [
-        { stopId: 1, name: 'ESI Hospital Rajajinagara (Towards Navarang)', etaMin: 10 },
-        { stopId: 2, name: 'Railway Station, Majestic', etaMin: 0 },
+        { stopId: 1, name: 'VIT', etaMin: 24 },
+        { stopId: 2, name: 'Vellore Old Bus Stand', etaMin: 0 },
       ].map((s) => ({ ...s, accessible: true })),
     },
     {
       id: 'route-2',
       routeId: 2,
-      code: '7B',
-      name: 'Yeshwanthpur - Koramangala',
-      etaMin: 16,
-      etaScheduledMin: 13,
+      code: 'V2',
+      name: 'VIT - Otteri',
+      etaMin: 41,
+      etaScheduledMin: 38,
       delayMin: 3,
       crowd: 'low',
       load: 12,
@@ -558,11 +563,32 @@ export const DEMO_PLAN = {
       ratio: 0.24,
       wheelchair: false,
       lowFloor: false,
-      score: 30.4,
+      score: 55.4,
       prediction: null,
       stops: [
-        { stopId: 1, name: 'ESI Hospital Rajajinagara (Towards Navarang)', etaMin: 16 },
-        { stopId: 2, name: 'Railway Station, Majestic', etaMin: 0 },
+        { stopId: 1, name: 'VIT', etaMin: 41 },
+        { stopId: 2, name: 'Vellore Old Bus Stand', etaMin: 0 },
+      ].map((s) => ({ ...s, accessible: true })),
+    },
+    {
+      id: 'route-3',
+      routeId: 3,
+      code: 'M1',
+      name: 'VIT - Christian Medical College',
+      etaMin: 29,
+      etaScheduledMin: 28,
+      delayMin: 1,
+      crowd: 'high',
+      load: 52,
+      capacity: 60,
+      ratio: 0.867,
+      wheelchair: true,
+      lowFloor: true,
+      score: 81.0,
+      prediction: null,
+      stops: [
+        { stopId: 1, name: 'VIT', etaMin: 29 },
+        { stopId: 2, name: 'Vellore Old Bus Stand', etaMin: 0 },
       ].map((s) => ({ ...s, accessible: true })),
     },
   ],

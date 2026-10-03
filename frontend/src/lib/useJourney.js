@@ -3,11 +3,11 @@ import { config, demoPlan, getRouteShape, getRouteStops, getStops, planJourney, 
 
 /**
  * The demo journey, matching the backend's seed data.
- * simulation_ml/seed/seed.py is built around exactly this pair: 21A is the
- * fast-but-packed option and 7B the slow-but-empty one, and the seed docstring
- * says "Plan STOP_RAJAJINAGAR -> STOP_MAJESTIC and you get two options."
+ * simulation_ml/seed/seed.py is built around exactly this pair: V1 is the
+ * fast-but-packed option and V2 the slow-but-empty one, and the seed docstring
+ * says "Plan STOP_VIT -> STOP_VELLORE_OLD_BUS_STAND and you get three options."
  */
-export const DEFAULT_JOURNEY = { from: 'STOP_RAJAJINAGAR', to: 'STOP_MAJESTIC' }
+export const DEFAULT_JOURNEY = { from: 'STOP_VIT', to: 'STOP_VELLORE_OLD_BUS_STAND' }
 
 /**
  * Stops for the from/to pickers. Fetched once - the stop list is reference

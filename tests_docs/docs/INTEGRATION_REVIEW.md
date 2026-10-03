@@ -121,10 +121,11 @@ the seed I wrote for M4 is **City College → Railway Station**. The demo story
 depends on the College/Railway pair having two options, so the data must be
 reconciled.
 
-> **Superseded.** The demo pair is now **Rajajinagar → Majestic** (`STOP_RAJAJINAGAR`
-> → `STOP_MAJESTIC`). Stops and road geometry come from OpenStreetMap/Overpass
-> and OSRM rather than hand-written coordinates, so none of the hand-written
-> stop names above exist any more. See `simulation_ml/data/real_routes.json`.
+> **Superseded.** The demo pair is now **VIT → Vellore Old Bus Stand** (`STOP_VIT`
+> → `STOP_VELLORE_OLD_BUS_STAND`) on the real Vellore–Katpadi corridor. Stops and
+> road geometry come from OpenStreetMap/Overpass and OSRM rather than
+> hand-written coordinates, so none of the hand-written stop names above exist
+> any more. See `simulation_ml/data/real_routes.json`.
 
 ---
 

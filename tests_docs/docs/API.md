@@ -1,4 +1,4 @@
-# RideSmart API Reference
+﻿# RideSmart API Reference
 
 **Owner:** Member 5 · **Implementation:** Member 2
 **Source of truth:** [`../api_contract.yaml`](../api_contract.yaml)
@@ -65,12 +65,12 @@ curl http://localhost:8000/api/routes
 
 ```json
 [
-  { "id": 1, "code": "21A", "name": "College to Railway Station",
-    "direction": "up", "stop_count": 5 },
-  { "id": 2, "code": "7B",  "name": "College to Railway Station (via Market)",
-    "direction": "up", "stop_count": 6 },
-  { "id": 3, "code": "3C",  "name": "Hospital to Central",
-    "direction": "down", "stop_count": 4 }
+  { "id": 1, "code": "V1", "name": "VIT - Bagayam",
+    "direction": "up", "stop_count": 9 },
+  { "id": 2, "code": "V2", "name": "VIT - Otteri",
+    "direction": "up", "stop_count": 10 },
+  { "id": 3, "code": "M1", "name": "VIT - Christian Medical College",
+    "direction": "up", "stop_count": 11 }
 ]
 ```
 
@@ -87,11 +87,12 @@ curl http://localhost:8000/api/routes/1/stops
 ```json
 [
   { "seq": 0, "scheduled_offset_sec": 0,
-    "stop": { "id": 1, "code": "STOP_RAJAJINAGAR", "name": "ESI Hospital Rajajinagara (Towards Navarang)",
-              "lat": 12.991236, "lon": 77.552485, "accessible": true } },
-  { "seq": 1, "scheduled_offset_sec": 564,
-    "stop": { "id": 2, "code": "STOP_MAJESTIC", "name": "Railway Station, Majestic",
-              "lat": 12.977507, "lon": 77.570768, "accessible": true } }
+    "stop": { "id": 1, "code": "STOP_VIT", "name": "VIT",
+              "lat": 12.968142, "lon": 79.156252, "accessible": true } },
+  { "seq": 1, "scheduled_offset_sec": 495,
+    "stop": { "id": 2, "code": "STOP_KATPADI_JUNCTION",
+              "name": "Katpadi Junction- Chittor Bus Stand",
+              "lat": 12.966256, "lon": 79.137494, "accessible": true } }
 ]
 ```
 
@@ -100,7 +101,7 @@ curl http://localhost:8000/api/routes/1/stops
 ### `GET /api/routes/{route_id}/shape`
 
 The route's **real road polyline**, in travel order. Every point is a vertex on
-an actual Bengaluru road, and `cum_m` is the distance from the start of the
+an actual Vellore–Katpadi road, and `cum_m` is the distance from the start of the
 route.
 
 Use this to draw the route. Do **not** join the stop coordinates into a line:
@@ -115,12 +116,12 @@ curl http://localhost:8000/api/routes/1/shape
 ```json
 {
   "route_id": 1,
-  "code": "21A",
-  "total_m": 51640.2,
-  "point_count": 269,
+  "code": "V1",
+  "total_m": 15157.7,
+  "point_count": 92,
   "points": [
-    { "seq": 0, "lat": 12.991236, "lon": 77.552485, "cum_m": 0.0 },
-    { "seq": 1, "lat": 12.99101, "lon": 77.5529, "cum_m": 46.3 }
+    { "seq": 0, "lat": 12.968078, "lon": 79.156234, "cum_m": 0.0 },
+    { "seq": 1, "lat": 12.967481, "lon": 79.158602, "cum_m": 41.7 }
   ]
 }
 ```
@@ -145,15 +146,15 @@ curl http://localhost:8000/api/buses/active
 [
   {
     "bus_id": 1,
-    "bus_reg": "KA01AB1234",
+    "bus_reg": "TN09AB1234",
     "trip_id": 1,
     "route_id": 1,
-    "route_code": "21A",
-    "lat": 12.9766,
-    "lon": 77.5984,
+    "route_code": "V1",
+    "lat": 12.9675,
+    "lon": 79.1586,
     "heading": 271.4,
     "speed_kmph": 20.2,
-    "next_stop_name": "Main Road",
+    "next_stop_name": "Katpadi Junction- Chittor Bus Stand",
     "crowd_level": "med",
     "crowd_load": 35,
     "capacity": 50,
@@ -196,7 +197,7 @@ curl -X POST http://localhost:8000/api/routes/plan \
 | Field | Type | Notes |
 |---|---|---|
 | `route_id` | int | |
-| `code` | string | `"21A"` |
+| `code` | string | `"V1"` |
 | `eta_min` | int | predicted, from observed segment times |
 | `eta_scheduled_min` | int | per the timetable |
 | `eta_predicted_min` | int | alias of `eta_min`, kept for frontend clarity |
@@ -255,10 +256,10 @@ curl -X PUT http://localhost:8000/api/trips/1/crowd \
   "active_buses": 3,
   "delayed_buses": 1,
   "avg_delay_min": 3.4,
-  "high_demand_route": "21A",
-  "crowded_route": "21A",
+  "high_demand_route": "M1",
+  "crowded_route": "M1",
   "routes": [
-    { "route_id": 1, "code": "21A", "active_trips": 1,
+    { "route_id": 1, "code": "V1", "active_trips": 1,
       "avg_delay_min": 4.1, "avg_crowd_ratio": 0.7, "demand_score": 0.82 }
   ]
 }

@@ -32,10 +32,10 @@ class TestSeedData:
         assert session.query(Stop).count() == 19
 
     def test_stops_have_real_coordinates(self, session):
-        """Every stop must sit inside the Bengaluru bbox the data was drawn from."""
+        """Every stop must sit inside the Vellore-Katpadi bbox the data came from."""
         for stop in session.query(Stop).all():
-            assert 12.8 <= stop.lat <= 13.1, f"{stop.code} latitude out of range"
-            assert 77.5 <= stop.lon <= 77.8, f"{stop.code} longitude out of range"
+            assert 12.87 <= stop.lat <= 12.98, f"{stop.code} latitude out of range"
+            assert 79.12 <= stop.lon <= 79.17, f"{stop.code} longitude out of range"
 
     def test_every_route_has_real_road_geometry(self, session):
         """Routes must carry OSRM road geometry, and it must be non-degenerate.
@@ -100,13 +100,13 @@ class TestCrowdBanding:
 class TestDemoContrast:
     """The whole product is "faster but packed vs slower but empty"."""
 
-    def test_21a_is_faster_but_more_crowded_than_7b(self, session):
+    def test_v1_is_faster_but_more_crowded_than_v2(self, session):
         """Compare the DEMO JOURNEY, not each route's full end-to-end run.
 
-        With real geography 7B is the shorter route overall (29.9 km vs
-        51.6 km), so whole-route duration no longer expresses "fast vs slow".
-        What the passenger actually sees is the ETA for their own trip, which
-        is the comparison that has to hold.
+        With real geography V2 is the longer route overall (16.3 km vs
+        V1's 15.2 km), so whole-route duration no longer expresses "fast vs
+        slow". What the passenger actually sees is the ETA for their own trip,
+        which is the comparison that has to hold.
         """
         from simulation_ml.seed.seed import DEMO_JOURNEY
 
@@ -128,14 +128,14 @@ class TestDemoContrast:
             )
             return secs, load
 
-        fast_secs, fast_load = journey_stats("21A")
-        slow_secs, slow_load = journey_stats("7B")
+        fast_secs, fast_load = journey_stats("V1")
+        slow_secs, slow_load = journey_stats("V2")
 
         assert fast_secs < slow_secs, (
-            f"21A must be the faster option for the demo journey "
+            f"V1 must be the faster option for the demo journey "
             f"({origin}->{destination}): {fast_secs}s vs {slow_secs}s"
         )
-        assert fast_load > slow_load, "21A must be the more crowded option"
+        assert fast_load > slow_load, "V1 must be the more crowded option"
         assert crowd_level_for(fast_load, 50) == "med"
         assert crowd_level_for(slow_load, 50) == "low"
 
@@ -246,7 +246,7 @@ class TestErrorShape:
     def test_unknown_stop(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_MARS", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_MARS", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         )
         self._assert_shape(r)
         assert r.json()["code"] == "unknown_stop"
@@ -285,7 +285,7 @@ class TestPlanner:
     def test_plan_returns_at_least_two_options(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         )
         assert r.status_code == 200, r.text
         options = r.json()["options"]
@@ -296,7 +296,7 @@ class TestPlanner:
     def test_plan_options_match_the_contract(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         )
         body = r.json()
         required = {
@@ -313,16 +313,16 @@ class TestPlanner:
     def test_plan_options_are_sorted_by_eta(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         )
         etas = [o["eta_min"] for o in r.json()["options"]]
         assert etas == sorted(etas)
 
     def test_plan_preserves_the_contrast(self, client):
-        """21A should beat 7B on ETA while being worse on crowding."""
+        """V1 should beat V2 on ETA while being worse on crowding."""
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         )
         options = r.json()["options"]
         fast = min(options, key=lambda o: o["eta_min"])
@@ -332,7 +332,7 @@ class TestPlanner:
     def test_unknown_stop_is_a_clean_400(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_MARS", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_MARS", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         )
         assert r.status_code == 400, r.text
         body = r.json()
@@ -344,8 +344,8 @@ class TestPlanner:
         r = client.post(
             "/api/routes/plan",
             json={
-                "from": "STOP_RAJAJINAGAR",
-                "to": "STOP_MAJESTIC",
+                "from": "STOP_VIT",
+                "to": "STOP_VELLORE_OLD_BUS_STAND",
                 "accessibility_only": True,
             },
         )
@@ -362,7 +362,7 @@ class TestCrowdOverride:
 
         before = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         ).json()
 
         r = client.put(f"/api/trips/{trip_id}/crowd", json={"load": 2, "capacity": 50})
@@ -371,7 +371,7 @@ class TestCrowdOverride:
 
         after = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
+            json={"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"},
         ).json()
 
         assert before != after, "changing crowd should change the recommendations"

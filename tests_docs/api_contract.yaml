@@ -243,10 +243,10 @@ components:
       required: [id, code, name, lat, lon]
       properties:
         id: { type: integer, example: 1 }
-        code: { type: string, example: STOP_RAJAJINAGAR }
-        name: { type: string, example: "ESI Hospital Rajajinagara (Towards Navarang)" }
-        lat: { type: number, format: double, example: 12.991236 }
-        lon: { type: number, format: double, example: 77.552485 }
+        code: { type: string, example: STOP_VIT }
+        name: { type: string, example: VIT }
+        lat: { type: number, format: double, example: 12.968142 }
+        lon: { type: number, format: double, example: 79.156252 }
         accessible: { type: boolean, example: true }
 
     Route:
@@ -254,8 +254,8 @@ components:
       required: [id, code, name]
       properties:
         id: { type: integer, example: 1 }
-        code: { type: string, example: "21A" }
-        name: { type: string, example: Rajajinagar - Electronic City }
+        code: { type: string, example: "V1" }
+        name: { type: string, example: VIT - Bagayam }
         direction: { type: string, enum: [up, down], example: up }
         stop_count: { type: integer, example: 9 }
 
@@ -264,8 +264,8 @@ components:
       required: [seq, lat, lon, cum_m]
       properties:
         seq: { type: integer, example: 0 }
-        lat: { type: number, format: double, example: 12.991236 }
-        lon: { type: number, format: double, example: 77.552485 }
+        lat: { type: number, format: double, example: 12.968078 }
+        lon: { type: number, format: double, example: 79.156234 }
         cum_m: { type: number, format: double, example: 0.0 }
 
     RouteShape:
@@ -273,9 +273,9 @@ components:
       required: [route_id, code, total_m, point_count, points]
       properties:
         route_id: { type: integer, example: 1 }
-        code: { type: string, example: "21A" }
-        total_m: { type: number, format: double, example: 51640.2 }
-        point_count: { type: integer, example: 269 }
+        code: { type: string, example: "V1" }
+        total_m: { type: number, format: double, example: 15157.7 }
+        point_count: { type: integer, example: 92 }
         points:
           type: array
           items: { $ref: "#/components/schemas/ShapePoint" }
@@ -295,15 +295,15 @@ components:
       required: [bus_id, lat, lon, ts]
       properties:
         bus_id: { type: integer, example: 1 }
-        bus_reg: { type: string, example: KA01AB1234 }
+        bus_reg: { type: string, example: TN09AB1234 }
         trip_id: { type: integer, example: 1 }
         route_id: { type: integer, example: 21 }
-        route_code: { type: string, example: "21A" }
-        lat: { type: number, format: double, example: 12.9716 }
-        lon: { type: number, format: double, example: 77.5946 }
+        route_code: { type: string, example: "V1" }
+        lat: { type: number, format: double, example: 12.968078 }
+        lon: { type: number, format: double, example: 79.156234 }
         heading: { type: number, description: Degrees from north }
         speed_kmph: { type: number, example: 28.4 }
-        next_stop_name: { type: string, example: Main Road }
+        next_stop_name: { type: string, example: Katpadi Junction- Chittor Bus Stand }
         crowd_level: { type: string, enum: [low, med, high] }
         crowd_load: { type: integer, example: 35 }
         capacity: { type: integer, example: 50 }
@@ -351,8 +351,8 @@ components:
          crowd_level, crowd_load, capacity, stops]
       properties:
         route_id: { type: integer, example: 21 }
-        code: { type: string, example: "21A" }
-        name: { type: string, example: College to Railway Station }
+        code: { type: string, example: "V1" }
+        name: { type: string, example: VIT - Bagayam }
         eta_min:
           type: integer
           description: Minutes remaining using HISTORICAL segment times
@@ -430,15 +430,15 @@ components:
         active_buses: { type: integer, example: 3 }
         delayed_buses: { type: integer, example: 1 }
         avg_delay_min: { type: number, example: 3.4 }
-        high_demand_route: { type: string, example: "21A" }
-        crowded_route: { type: string, example: "21A" }
+        high_demand_route: { type: string, example: "M1" }
+        crowded_route: { type: string, example: "M1" }
         routes:
           type: array
           items:
             type: object
             properties:
               route_id: { type: integer }
-              code: { type: string, example: "21A" }
+              code: { type: string, example: "V1" }
               active_trips: { type: integer }
               avg_delay_min: { type: number }
               avg_crowd_ratio: { type: number }

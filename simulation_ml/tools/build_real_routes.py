@@ -1,5 +1,5 @@
 """
-Author the real Bengaluru route data.
+Author the real Vellore-Katpadi route data.
 
 Queries Overpass for real bus stops, snaps them to landmarks, then asks OSRM for
 the real drivable road geometry between consecutive stops. Writes
@@ -7,6 +7,23 @@ simulation_ml/data/real_routes.json, which is committed so nothing in the app
 depends on Overpass or OSRM at runtime.
 
 Re-run only when the route layout changes:  python simulation_ml/tools/build_real_routes.py
+
+THE CORRIDOR
+------------
+Vellore town and Katpadi are ~7 km apart, not the ~30 km that a naive reading of
+"Katpadi" suggests. OSM places:
+
+    Katpadi      (suburb)        12.97556, 79.13577
+    VIT                          12.96814, 79.15625
+    Katpadi Junction bus stand   12.96626, 79.13749
+    Vellore (city centre)        12.90718, 79.13097
+    Vellore Old Bus Stand        12.92215, 79.13252
+
+So the spine is a single north-south arterial: VIT in the north-east, down
+through Katpadi, Silk Mill and the town centre to Bagayam / Christian Medical
+College in the south. Every route below runs along that spine, which is why the
+demo journey (VIT -> Vellore Old Bus Stand) is shared by all three and the
+planner can offer a genuine choice.
 """
 import json
 import math
@@ -17,63 +34,64 @@ import urllib.request
 
 UA = "RideSmart-dev/1.0 (authoring real route geometry)"
 
-# Anchor coordinates are well-known public landmarks; the stop NAME and exact
-# coordinate always come from OSM.
+# Anchor coordinates are the OSM coordinates of the landmark itself; the stop
+# NAME is re-read from OSM at build time so a retag upstream is picked up.
 LANDMARKS = {
-    "MAJESTIC": (12.9767, 77.5713),
-    "VIDHANA": (12.9794, 77.5910),
-    "MG_ROAD": (12.9756, 77.6069),
-    "BRIGADE_ROAD": (12.9719, 77.6068),
-    "INDIRANAGAR": (12.9784, 77.6408),
-    "KORAMANGALA": (12.9352, 77.6245),
-    "JAYANAGAR": (12.9250, 77.5938),
-    "RAJAJINAGAR": (12.9915, 77.5520),
-    "YESHWANTHPUR": (13.0234, 77.5540),
-    "MARATHAHALLI": (12.9591, 77.6974),
-    "HSR_LAYOUT": (12.9116, 77.6474),
-    "ELECTRONIC_CITY": (12.8452, 77.6602),
-    "WHITEFIELD": (12.9698, 77.7500),
-    "KR_MARKET": (12.9616, 77.5735),
-    "TRINITY": (12.9448, 77.6220),
-    "BANASHANKARI": (12.9250, 77.5667),
-    "MALLESHWARAM": (13.0035, 77.5720),
-    "BASAVANAGUDI": (12.9420, 77.5730),
-    "NAGASANDRA": (13.0360, 77.5450),
-    "HARIHARA": (12.9380, 77.5790),
+    "VIT": (12.96814, 79.15625),
+    "KATPADI_JUNCTION": (12.96626, 79.13749),
+    "ODAI_PILLAIYAR": (12.95865, 79.13718),
+    "AUXILIUM": (12.95847, 79.14162),
+    "DKM": (12.95012, 79.14139),
+    "SILK_MILL": (12.94979, 79.13719),
+    "KANGEYANALLUR": (12.94688, 79.13697),
+    "NATIONAL_THEATRE": (12.92883, 79.13384),
+    "CMC_HOSPITAL": (12.92555, 79.13338),
+    "VELLORE_OLD_BUS_STAND": (12.92215, 79.13252),
+    "RAJA_THEATRE": (12.91489, 79.13266),
+    "VELAPPADI": (12.90531, 79.13578),
+    "LAKSHMI_THEATRE": (12.90300, 79.13167),
+    "SANKARANPALAYAM": (12.90161, 79.13529),
+    "TOLLGATE": (12.89966, 79.13110),
+    "AGARAVARAM": (12.88989, 79.13575),
+    "OTTERI": (12.88478, 79.13574),
+    "BAGAYAM": (12.88009, 79.13471),
+    "CMC_CAMPUS": (12.87922, 79.13001),
 }
 
-BBOX = "12.83,77.50,13.06,77.78"
+# Comfortably contains every landmark above (lat 12.878-12.969, lon 79.130-79.157).
+BBOX = "12.86,79.10,13.00,79.20"
 
-# Codes and stop order are ours; coordinates and names are real.
-# The crowding contrast per route is deliberate - it is the demo's story.
+# Codes, names and stop order are ours; coordinates and stop names are real.
+# The per-route speed / crowding contrast is deliberate - it is the demo's story.
 ROUTES = [
     {
-        "code": "21A",
-        "name": "Rajajinagar - Electronic City",
-        "crowd_bias": "low",
-        "stops": [
-            "RAJAJINAGAR", "MAJESTIC", "KR_MARKET", "BASAVANAGUDI",
-            "BANASHANKARI", "JAYANAGAR", "HSR_LAYOUT", "MARATHAHALLI",
-            "ELECTRONIC_CITY",
-        ],
-    },
-    {
-        "code": "7B",
-        "name": "Yeshwanthpur - Koramangala",
+        "code": "V1",
+        "name": "VIT - Bagayam",
         "crowd_bias": "medium",
         "stops": [
-            "YESHWANTHPUR", "MALLESHWARAM", "RAJAJINAGAR", "MAJESTIC",
-            "VIDHANA", "MG_ROAD", "BRIGADE_ROAD", "INDIRANAGAR", "KORAMANGALA",
+            "VIT", "KATPADI_JUNCTION", "ODAI_PILLAIYAR", "SILK_MILL",
+            "CMC_HOSPITAL", "VELLORE_OLD_BUS_STAND", "RAJA_THEATRE",
+            "TOLLGATE", "BAGAYAM",
         ],
     },
     {
-        "code": "3C",
-        "name": "Majestic - Nagasandra",
+        "code": "V2",
+        "name": "VIT - Otteri",
+        "crowd_bias": "low",
+        "stops": [
+            "VIT", "KATPADI_JUNCTION", "AUXILIUM", "DKM", "KANGEYANALLUR",
+            "CMC_HOSPITAL", "VELLORE_OLD_BUS_STAND", "LAKSHMI_THEATRE",
+            "AGARAVARAM", "OTTERI",
+        ],
+    },
+    {
+        "code": "M1",
+        "name": "VIT - Christian Medical College",
         "crowd_bias": "high",
         "stops": [
-            "MAJESTIC", "KR_MARKET", "HARIHARA", "BANASHANKARI", "JAYANAGAR",
-            "TRINITY", "KORAMANGALA", "INDIRANAGAR", "MG_ROAD", "VIDHANA",
-            "NAGASANDRA",
+            "VIT", "KATPADI_JUNCTION", "ODAI_PILLAIYAR", "SILK_MILL",
+            "NATIONAL_THEATRE", "VELLORE_OLD_BUS_STAND", "RAJA_THEATRE",
+            "VELAPPADI", "SANKARANPALAYAM", "OTTERI", "CMC_CAMPUS",
         ],
     },
 ]
@@ -145,14 +163,30 @@ def simplify(points, tol_m=4.0):
     return rdp(points)
 
 
-print(f"Overpass: bus stops in {BBOX}")
-res = overpass(f'[out:json][timeout:240];node["highway"="bus_stop"]({BBOX});out body;')
+print(f"Overpass: transit stops in {BBOX} (Vellore-Katpadi)")
+res = overpass(
+    "[out:json][timeout:240];("
+    f'node["highway"="bus_stop"]({BBOX});'
+    f'node["amenity"="bus_station"]({BBOX});'
+    f'node["railway"~"^(station|halt)$"]({BBOX});'
+    ");out body;"
+)
 nodes = [n for n in res["elements"] if n.get("tags", {}).get("name")]
-print(f"  {len(nodes)} named stops")
+print(f"  {len(nodes)} named transit points")
 
+# Refuse to guess: an anchor whose nearest OSM node is implausibly far away means
+# the landmark was renamed, moved, or the bbox no longer covers it.
+MAX_SNAP_KM = 1.5
 stops = {}
 for key, anchor in LANDMARKS.items():
     best = min(nodes, key=lambda n: km(anchor, (n["lat"], n["lon"])))
+    d = km(anchor, (best["lat"], best["lon"]))
+    if d > MAX_SNAP_KM:
+        raise SystemExit(
+            f"{key}: nearest named OSM node is {d:.2f} km from the anchor "
+            f"({best['tags']['name']!r}). The landmark probably moved - update "
+            f"LANDMARKS/BBOX before re-running."
+        )
     stops[key] = {
         "code": f"STOP_{key}",
         "name": best["tags"]["name"],
@@ -188,6 +222,15 @@ for r in ROUTES:
 dest = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "real_routes.json")
 os.makedirs(os.path.dirname(dest), exist_ok=True)
 with open(dest, "w", encoding="utf-8") as fh:
-    json.dump({"source": "OpenStreetMap via Overpass API; road geometry via OSRM", "routes": out_routes}, fh, indent=1)
+    json.dump(
+        {
+            "source": "OpenStreetMap via Overpass API; road geometry via OSRM",
+            "region": "Vellore - Katpadi, Tamil Nadu",
+            "routes": out_routes,
+        },
+        fh,
+        indent=1,
+        ensure_ascii=False,
+    )
 size = os.path.getsize(dest) / 1024
 print(f"wrote {dest} ({size:.0f} KB)")

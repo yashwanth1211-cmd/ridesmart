@@ -27,7 +27,7 @@ import { useTripEtas } from '@/lib/useTripEtas'
  *  1. "The UI must render every entry - showing one option defeats the purpose
  *     of the feature." The list never collapses to a single winner; the fastest
  *     is preselected but every alternative stays visible and one click away.
- *  2. The seed's whole point is that 21A is faster-but-packed and 7B is
+ *  2. The seed's whole point is that V1 is faster-but-packed and V2 is
  *     slower-but-empty. Neither dominates, so ranking on ETA alone and hiding
  *     the empty one would delete the decision the product exists to present.
  */

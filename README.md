@@ -65,13 +65,13 @@ RideSmart closes the loop on both sides:
 Most transit apps show you **one** route. RideSmart shows you the trade-off:
 
 ```text
-You want:  Rajajinagar → Majestic
+You want:  VIT → Vellore Old Bus Stand
 
 ┌─ Option A ──────────────┐   ┌─ Option B ──────────────┐
-│ Bus 21A         🟡 MED  │   │ Bus 7B         🟢 LOW   │
-│ ETA          15 min     │   │ ETA           18 min    │
+│ Bus V1          🟡 MED  │   │ Bus V2          🟢 LOW   │
+│ ETA          24 min     │   │ ETA           41 min     │
 │ Crowd       35 / 50     │   │ Crowd        12 / 50    │
-│ Delay       +4 min      │   │ Delay        +1 min     │
+│ Delay       +1 min      │   │ Delay        +3 min     │
 │ ♿ Wheelchair accessible │   │ Low-floor vehicle       │
 └─────────────────────────┘   └─────────────────────────┘
             ▲ your choice
@@ -92,18 +92,23 @@ matters to them right now, and the system is honest about the cost of each choic
 | 6 | Authority Dashboard | KPIs: active, delayed, high-demand and most crowded routes | M2 |
 | 7 | Data Simulation | Buses driven along real OSM road geometry + crowd generator | M4 |
 
-## 🗺️ Real Bengaluru map data
+## 🗺️ Real Vellore–Katpadi map data
 
 Stops and roads are real, not placeholders:
 
+- **Region** — the Vellore–Katpadi corridor in Tamil Nadu: VIT in the north-east,
+  down through Katpadi and the town centre to Bagayam and Christian Medical
+  College in the south. All three routes run this spine, so they are genuine
+  alternatives for the same journey.
 - **Stops** — names and coordinates come from **OpenStreetMap** (Overpass API),
-  snapped to well-known Bengaluru landmarks.
+  snapped to well-known landmarks like VIT, Katpadi Junction and Vellore Old Bus
+  Stand.
 - **Roads** — every route's polyline comes from the **OSRM** routing service, so
   the line drawn on the map is the road the bus is actually on. Straight lines
   between stops would cut across buildings, lakes and parks.
 - **Buses** — the simulator walks that polyline by distance travelled, not by
-  interpolating between stop positions, so a 19 km leg correctly takes far
-  longer than a 2 km one.
+  interpolating between stop positions, so a 3.3 km leg correctly takes far
+  longer than a 0.6 km one.
 
 Fetched once by `simulation_ml/tools/build_real_routes.py` and committed to
 `simulation_ml/data/real_routes.json`, so the running app makes **no external
@@ -114,8 +119,12 @@ python -m simulation_ml.tools.build_real_routes
 python -m simulation_ml.seed.seed --reset
 ```
 
-The route codes (`21A`, `7B`, `3C`) and crowd profiles are demo data, not
-official BMTC routes or schedules. Map data © OpenStreetMap contributors
+The generator refuses to run if a landmark can no longer be snapped to a real OSM
+node, which is what stops a plausible-but-wrong pin from ever reaching the
+database.
+
+The route codes (`V1`, `V2`, `M1`) and crowd profiles are demo data, not
+official TNSTC routes or schedules. Map data © OpenStreetMap contributors
 (ODbL).
 
 ## 📸 Screenshots
@@ -291,22 +300,22 @@ Reference: [`tests_docs/docs/API.md`](tests_docs/docs/API.md)
 ```bash
 curl -X POST http://localhost:8000/api/routes/plan \
   -H "Content-Type: application/json" \
-  -d '{"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"}'
+  -d '{"from": "STOP_VIT", "to": "STOP_VELLORE_OLD_BUS_STAND"}'
 ```
 
 ```json
 {
-  "from": { "id": 1, "code": "STOP_RAJAJINAGAR", "name": "ESI Hospital Rajajinagara (Towards Navarang)", "lat": 12.991236, "lon": 77.552485, "accessible": true },
-  "to":   { "id": 2, "code": "STOP_MAJESTIC", "name": "Railway Station, Majestic", "lat": 12.977507, "lon": 77.570768, "accessible": true },
+  "from": { "id": 1, "code": "STOP_VIT", "name": "VIT", "lat": 12.968142, "lon": 79.156252, "accessible": true },
+  "to":   { "id": 6, "code": "STOP_VELLORE_OLD_BUS_STAND", "name": "Vellore Old Bus Stand", "lat": 12.92215, "lon": 79.13252, "accessible": true },
   "generated_at": "2026-10-03T05:17:07Z",
   "options": [
     {
       "route_id": 1,
-      "code": "21A",
-      "name": "Rajajinagar - Electronic City",
-      "eta_min": 10,
-      "eta_scheduled_min": 9,
-      "eta_predicted_min": 10,
+      "code": "V1",
+      "name": "VIT - Bagayam",
+      "eta_min": 24,
+      "eta_scheduled_min": 23,
+      "eta_predicted_min": 24,
       "delay_min": 1,
       "crowd_level": "med",
       "crowd_load": 35,
@@ -314,19 +323,19 @@ curl -X POST http://localhost:8000/api/routes/plan \
       "crowd_ratio": 0.7,
       "wheelchair_accessible": true,
       "low_floor": true,
-      "score": 52.0,
+      "score": 66.0,
       "stops": [
-        { "stop_id": 1, "name": "ESI Hospital Rajajinagara (Towards Navarang)", "eta_min": 10, "accessible": true },
-        { "stop_id": 2, "name": "Railway Station, Majestic", "eta_min": 0, "accessible": true }
+        { "stop_id": 1, "name": "VIT", "eta_min": 24, "accessible": true },
+        { "stop_id": 6, "name": "Vellore Old Bus Stand", "eta_min": 0, "accessible": true }
       ]
     },
     {
       "route_id": 2,
-      "code": "7B",
-      "name": "Yeshwanthpur - Koramangala",
-      "eta_min": 16,
-      "eta_scheduled_min": 13,
-      "eta_predicted_min": 16,
+      "code": "V2",
+      "name": "VIT - Otteri",
+      "eta_min": 41,
+      "eta_scheduled_min": 38,
+      "eta_predicted_min": 41,
       "delay_min": 3,
       "crowd_level": "low",
       "crowd_load": 12,
@@ -334,8 +343,8 @@ curl -X POST http://localhost:8000/api/routes/plan \
       "crowd_ratio": 0.24,
       "wheelchair_accessible": false,
       "low_floor": false,
-      "score": 30.4,
-      "stops": [ "... 2 stops ..." ]
+      "score": 55.4,
+      "stops": [ "... stops ..." ]
     }
   ]
 }
@@ -352,8 +361,8 @@ why it counts down to `0` at your destination.
 > ~3 minutes. Rehearse this before presenting.
 
 1. **Open the app** — map shows buses moving live *(simulator running)*
-2. **Plan a journey** Rajajinagar → Majestic
-3. **Highlight the two options** — *"faster but 🟡 packed, or 3 minutes later and 🟢 empty"*
+2. **Plan a journey** VIT → Vellore Old Bus Stand
+3. **Highlight the two options** — *"24 min but 🟡 packed, or 41 min and 🟢 empty"*
 4. **Change a bus's crowd level** → re-plan → watch the ranking shift *(proves it is live, not static)*
 5. **Authority dashboard** — delayed buses, most crowded route, demand score
 
@@ -373,7 +382,7 @@ never touches your local `ridesmart.db` and can run in any order.
 The suite is split by ownership:
 
 - **Data-layer tests** — seed integrity, crowd banding, the demo contrast between
-  21A and 7B, simulator movement and geometry, and that a bus wraps back around
+  V1 and V2, simulator movement and geometry, and that a bus wraps back around
   instead of freezing at the terminus.
 - **API contract tests** — health, routes, stops, tracking, the planner, crowd
   override, dashboard and the WebSocket, asserted against `api_contract.yaml`.

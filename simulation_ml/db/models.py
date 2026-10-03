@@ -125,7 +125,7 @@ class Stop(Base):
 
 
 class Route(Base):
-    """A bus route, e.g. 21A."""
+    """A bus route, e.g. V1."""
 
     __tablename__ = "route"
 

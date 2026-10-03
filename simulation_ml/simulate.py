@@ -364,8 +364,8 @@ class TripSimulator:
 
         Which stop has been reached comes from the real geometry when present.
         Mapping progress onto stops by even fraction is wrong for real routes:
-        on 21A the last leg is 18.9 km and the first is 3.8 km, so a bus is
-        physically at stop 7 long before progress reaches 7/8.
+        on V2 the fifth stop sits 10.2 km along a 16.3 km route, so the bus is
+        62% of the way there but only 5/9 of the way through the stop list.
         """
         if self.path is not None:
             reached_seq = self.path.stop_index_at(self.progress * self.path.total_m)
@@ -530,9 +530,9 @@ def run(args) -> None:
                 # progress is a fraction of DISTANCE, so the stop it sits at
                 # has to come from the geometry. Scaling it by the stop count
                 # assumed evenly spaced stops, which real routes are not - on
-                # 21A the last leg is 18.9 km and the first is 3.8 km - and it
-                # left last_stop_seq too high, so every remaining stop on that
-                # run was silently skipped for crowd reporting.
+                # V1 the legs run from 0.63 km to 3.30 km - and it left
+                # last_stop_seq too high, so every remaining stop on that run
+                # was silently skipped for crowd reporting.
                 if sim.path is not None:
                     sim.last_stop_seq = sim.path.stop_index_at(
                         sim.progress * sim.path.total_m

@@ -247,7 +247,7 @@ export default function LiveMap({
         source: 'endpoints',
         paint: {
           'circle-radius': 7,
-          'circle-color': ['match', ['get', 'code'], 'STOP_RAJAJINAGAR', '#4f8cff', '#ff5a5f'],
+          'circle-color': ['match', ['get', 'code'], 'STOP_VIT', '#4f8cff', '#ff5a5f'],
           'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
         },
