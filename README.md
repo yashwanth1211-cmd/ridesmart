@@ -65,7 +65,7 @@ RideSmart closes the loop on both sides:
 Most transit apps show you **one** route. RideSmart shows you the trade-off:
 
 ```text
-You want:  City College → Railway Station
+You want:  Rajajinagar → Majestic
 
 ┌─ Option A ──────────────┐   ┌─ Option B ──────────────┐
 │ Bus 21A         🟡 MED  │   │ Bus 7B         🟢 LOW   │
@@ -90,7 +90,33 @@ matters to them right now, and the system is honest about the cost of each choic
 | 4 | Crowd Estimation | Occupancy classified Low / Medium / High to guide route choice | M1 · M4 |
 | 5 | Accessibility | Wheelchair access, low-floor and accessible-stop flags | M2 · M3 |
 | 6 | Authority Dashboard | KPIs: active, delayed, high-demand and most crowded routes | M2 |
-| 7 | Data Simulation | Synthetic bus movement + crowd generator for development | M4 |
+| 7 | Data Simulation | Buses driven along real OSM road geometry + crowd generator | M4 |
+
+## 🗺️ Real Bengaluru map data
+
+Stops and roads are real, not placeholders:
+
+- **Stops** — names and coordinates come from **OpenStreetMap** (Overpass API),
+  snapped to well-known Bengaluru landmarks.
+- **Roads** — every route's polyline comes from the **OSRM** routing service, so
+  the line drawn on the map is the road the bus is actually on. Straight lines
+  between stops would cut across buildings, lakes and parks.
+- **Buses** — the simulator walks that polyline by distance travelled, not by
+  interpolating between stop positions, so a 19 km leg correctly takes far
+  longer than a 2 km one.
+
+Fetched once by `simulation_ml/tools/build_real_routes.py` and committed to
+`simulation_ml/data/real_routes.json`, so the running app makes **no external
+network calls** and the demo works offline. Re-run the tool to refresh:
+
+```bash
+python -m simulation_ml.tools.build_real_routes
+python -m simulation_ml.seed.seed --reset
+```
+
+The route codes (`21A`, `7B`, `3C`) and crowd profiles are demo data, not
+official BMTC routes or schedules. Map data © OpenStreetMap contributors
+(ODbL).
 
 ## 📸 Screenshots
 
@@ -135,7 +161,7 @@ Live Tracking  Route Planner  Crowd + Dashboard
                   ▲
                   │  writes telemetry
         ┌─────────────────────┐
-        │  Bus Simulator      │  synthetic movement + crowd
+        │  Bus Simulator      │  real-road movement + crowd
         │      (Member 4)     │
         └─────────────────────┘
 ```
@@ -170,7 +196,7 @@ writes, so there is no second copy of the data to keep in sync.
 | Backend | Python 3.11, FastAPI, Uvicorn, Pydantic |
 | Database | SQLite (dev), SQLAlchemy 2.x, portable to PostgreSQL |
 | ML | pandas, numpy, scikit-learn |
-| Simulation | Custom Python simulator (synthetic telemetry) |
+| Simulation | Custom Python simulator (real-road telemetry) |
 | Testing | pytest, pytest-asyncio, FastAPI TestClient |
 | DevOps | Docker, Docker Compose |
 
@@ -195,7 +221,7 @@ python -m venv .venv
 pip install -r database/requirements.txt
 pip install -r simulation_ml/requirements.txt
 
-# 5. Seed the database  (3 routes, 12 stops, 4 buses, 3 active trips)
+# 5. Seed the database  (3 routes, 19 real stops, 4 buses, 3 active trips)
 #    Optional: the API seeds automatically on startup, so this is only needed
 #    if you want the DB ready before the server starts.
 python -m simulation_ml.seed.seed --reset
@@ -265,54 +291,51 @@ Reference: [`tests_docs/docs/API.md`](tests_docs/docs/API.md)
 ```bash
 curl -X POST http://localhost:8000/api/routes/plan \
   -H "Content-Type: application/json" \
-  -d '{"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"}'
+  -d '{"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"}'
 ```
 
 ```json
 {
-  "from": { "id": 1, "code": "STOP_COLLEGE", "name": "City College", "lat": 12.9716, "lon": 77.5946, "accessible": true },
-  "to":   { "id": 10, "code": "STOP_RAILWAY", "name": "Railway Station", "lat": 12.9795, "lon": 77.5568, "accessible": true },
-  "generated_at": "2026-10-02T03:12:55Z",
+  "from": { "id": 1, "code": "STOP_RAJAJINAGAR", "name": "ESI Hospital Rajajinagara (Towards Navarang)", "lat": 12.991236, "lon": 77.552485, "accessible": true },
+  "to":   { "id": 2, "code": "STOP_MAJESTIC", "name": "Railway Station, Majestic", "lat": 12.977507, "lon": 77.570768, "accessible": true },
+  "generated_at": "2026-10-03T05:17:07Z",
   "options": [
     {
       "route_id": 1,
       "code": "21A",
-      "name": "College to Railway Station",
-      "eta_min": 12,
-      "eta_scheduled_min": 11,
-      "eta_predicted_min": 12,
+      "name": "Rajajinagar - Electronic City",
+      "eta_min": 10,
+      "eta_scheduled_min": 9,
+      "eta_predicted_min": 10,
       "delay_min": 1,
       "crowd_level": "med",
-      "crowd_load": 30,
+      "crowd_load": 35,
       "capacity": 50,
-      "crowd_ratio": 0.6,
+      "crowd_ratio": 0.7,
       "wheelchair_accessible": true,
       "low_floor": true,
-      "score": 48.0,
+      "score": 52.0,
       "stops": [
-        { "stop_id": 1,  "name": "City College",       "eta_min": 12, "accessible": true },
-        { "stop_id": 2,  "name": "Central Library",    "eta_min": 9,  "accessible": true },
-        { "stop_id": 5,  "name": "Main Road",          "eta_min": 5,  "accessible": true },
-        { "stop_id": 9,  "name": "Majestic (Central)", "eta_min": 2,  "accessible": true },
-        { "stop_id": 10, "name": "Railway Station",    "eta_min": 0,  "accessible": true }
+        { "stop_id": 1, "name": "ESI Hospital Rajajinagara (Towards Navarang)", "eta_min": 10, "accessible": true },
+        { "stop_id": 2, "name": "Railway Station, Majestic", "eta_min": 0, "accessible": true }
       ]
     },
     {
       "route_id": 2,
       "code": "7B",
-      "name": "Market to Airport",
-      "eta_min": 21,
-      "eta_scheduled_min": 18,
-      "eta_predicted_min": 21,
+      "name": "Yeshwanthpur - Koramangala",
+      "eta_min": 16,
+      "eta_scheduled_min": 13,
+      "eta_predicted_min": 16,
       "delay_min": 3,
-      "crowd_level": "med",
-      "crowd_load": 29,
+      "crowd_level": "low",
+      "crowd_load": 12,
       "capacity": 50,
-      "crowd_ratio": 0.58,
+      "crowd_ratio": 0.24,
       "wheelchair_accessible": false,
       "low_floor": false,
-      "score": 55.8,
-      "stops": [ "... 5 stops ..." ]
+      "score": 30.4,
+      "stops": [ "... 2 stops ..." ]
     }
   ]
 }
@@ -329,7 +352,7 @@ why it counts down to `0` at your destination.
 > ~3 minutes. Rehearse this before presenting.
 
 1. **Open the app** — map shows buses moving live *(simulator running)*
-2. **Plan a journey** City College → Railway Station
+2. **Plan a journey** Rajajinagar → Majestic
 3. **Highlight the two options** — *"faster but 🟡 packed, or 3 minutes later and 🟢 empty"*
 4. **Change a bus's crowd level** → re-plan → watch the ranking shift *(proves it is live, not static)*
 5. **Authority dashboard** — delayed buses, most crowded route, demand score

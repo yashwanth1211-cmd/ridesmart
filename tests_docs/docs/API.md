@@ -87,12 +87,42 @@ curl http://localhost:8000/api/routes/1/stops
 ```json
 [
   { "seq": 0, "scheduled_offset_sec": 0,
-    "stop": { "id": 1, "code": "STOP_COLLEGE", "name": "City College",
-              "lat": 12.9716, "lon": 77.5946, "accessible": true } },
-  { "seq": 1, "scheduled_offset_sec": 210,
-    "stop": { "id": 2, "code": "STOP_LIBRARY", "name": "Central Library",
-              "lat": 12.9759, "lon": 77.6067, "accessible": true } }
+    "stop": { "id": 1, "code": "STOP_RAJAJINAGAR", "name": "ESI Hospital Rajajinagara (Towards Navarang)",
+              "lat": 12.991236, "lon": 77.552485, "accessible": true } },
+  { "seq": 1, "scheduled_offset_sec": 564,
+    "stop": { "id": 2, "code": "STOP_MAJESTIC", "name": "Railway Station, Majestic",
+              "lat": 12.977507, "lon": 77.570768, "accessible": true } }
 ]
+```
+
+---
+
+### `GET /api/routes/{route_id}/shape`
+
+The route's **real road polyline**, in travel order. Every point is a vertex on
+an actual Bengaluru road, and `cum_m` is the distance from the start of the
+route.
+
+Use this to draw the route. Do **not** join the stop coordinates into a line:
+adjacent stops can be kilometres apart with a lake, a park or a railway line
+between them, so a line through the stops is not a drivable path. The map draws
+this polyline and the simulator walks it, so what you see is where the bus is.
+
+```bash
+curl http://localhost:8000/api/routes/1/shape
+```
+
+```json
+{
+  "route_id": 1,
+  "code": "21A",
+  "total_m": 51640.2,
+  "point_count": 269,
+  "points": [
+    { "seq": 0, "lat": 12.991236, "lon": 77.552485, "cum_m": 0.0 },
+    { "seq": 1, "lat": 12.99101, "lon": 77.5529, "cum_m": 46.3 }
+  ]
+}
 ```
 
 ---
@@ -151,14 +181,14 @@ The UI must render every option; showing one defeats the purpose.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `from` | string | yes | stop code, e.g. `STOP_COLLEGE` |
-| `to` | string | yes | stop code, e.g. `STOP_RAILWAY` |
+| `from` | string | yes | stop code, e.g. `STOP_RAJAJINAGAR` |
+| `to` | string | yes | stop code, e.g. `STOP_MAJESTIC` |
 | `accessibility_only` | bool | no | default `false`; drops buses without wheelchair access |
 
 ```bash
 curl -X POST http://localhost:8000/api/routes/plan \
   -H "Content-Type: application/json" \
-  -d '{"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"}'
+  -d '{"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"}'
 ```
 
 **Response** — see the full example in the [README](../../README.md#api-reference).

@@ -41,8 +41,9 @@ import { CROWD_LEVELS, MAP_DEFAULTS, MAP_STYLE } from '@/config/constants'
  *    update intervals with a handful of buses either is fine, but a symbol
  *    layer keeps hundreds of vehicles cheap and avoids React reconciliation on
  *    the map subtree entirely.
- *  - The route polyline comes from useRouteStops, not from PlanOption.stops,
- *    which carries no coordinates.
+ *  - The route polyline comes from useRouteShape (real OSRM road geometry), not
+ *    from PlanOption.stops, which carries no coordinates. Stop MARKERS still come
+ *    from useRouteStops.
  */
 
 const EMPTY = { type: 'FeatureCollection', features: [] }
@@ -63,6 +64,7 @@ function toCollection(items, map) {
 export default function LiveMap({
   buses = [],
   routeStops = [],
+  routeShape = [],
   origin = null,
   destination = null,
   selectedRouteCode = null,
@@ -76,15 +78,22 @@ export default function LiveMap({
   const popupRef = useRef(null)
   const fittedRouteRef = useRef('')
 
-  latest.current = { buses, routeStops, origin, destination, selectedRouteCode, onSelectBus }
+  latest.current = { buses, routeStops, routeShape, origin, destination, selectedRouteCode, onSelectBus }
 
   /** Pushes the current ref'd props into the map's sources. Safe to call often. */
   const sync = () => {
     const map = mapRef.current
     if (!map || !readyRef.current) return
 
-    const { buses: b, routeStops: rs, origin: o, destination: d, selectedRouteCode: code, onSelectBus: cb } =
-      latest.current
+    const {
+      buses: b,
+      routeStops: rs,
+      routeShape: shape,
+      origin: o,
+      destination: d,
+      selectedRouteCode: code,
+      onSelectBus: cb,
+    } = latest.current
 
     const busGeo = toCollection(b, (x) => ({
       busId: x.busId,
@@ -98,9 +107,19 @@ export default function LiveMap({
       nextStop: x.nextStopName ?? '',
     }))
 
-    const coords = rs
+    // Draw the REAL road polyline, not a line through the stop coordinates.
+    // Stop markers still come from routeStops, but the path between them comes
+    // from OSRM geometry so the line on screen is the road the bus drives.
+    // Falls back to joining the stops if geometry is missing.
+    const shapeCoords = shape
+      .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+      .map((p) => [p.lon, p.lat])
+
+    const stopCoords = rs
       .filter((s) => Number.isFinite(s.lon) && Number.isFinite(s.lat))
       .map((s) => [s.lon, s.lat])
+
+    const coords = shapeCoords.length >= 2 ? shapeCoords : stopCoords
 
     map.getSource('buses')?.setData(busGeo)
     map.getSource('route')?.setData(
@@ -228,7 +247,7 @@ export default function LiveMap({
         source: 'endpoints',
         paint: {
           'circle-radius': 7,
-          'circle-color': ['match', ['get', 'code'], 'STOP_COLLEGE', '#4f8cff', '#ff5a5f'],
+          'circle-color': ['match', ['get', 'code'], 'STOP_RAJAJINAGAR', '#4f8cff', '#ff5a5f'],
           'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
         },

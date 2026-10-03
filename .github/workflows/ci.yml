@@ -91,6 +91,7 @@ jobs:
           declared = set(re.findall(r"^  (/api/[A-Za-z0-9_/{}.-]*):", text, re.M))
           required = {
               "/api/health", "/api/routes", "/api/routes/{route_id}/stops",
+              "/api/routes/{route_id}/shape",
               "/api/stops", "/api/buses/active", "/api/routes/plan",
               "/api/trips/{trip_id}/eta", "/api/trips/{trip_id}/crowd",
               "/api/authority/dashboard", "/api/ws/buses",

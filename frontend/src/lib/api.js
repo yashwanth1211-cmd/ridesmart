@@ -406,6 +406,21 @@ export const getRouteStops = (routeId, options) =>
   )
 
 /**
+ * The route's real road polyline from OSRM.
+ *
+ * Stop coordinates are not a route: adjacent stops can be kilometres apart with
+ * a lake or a park between them, so a line through them is not drivable. The map
+ * draws this instead, which is why the line on screen matches where the bus is.
+ */
+export const getRouteShape = (routeId, options) =>
+  request(`/api/routes/${routeId}/shape`, options).then((r) => ({
+    routeId: r.route_id,
+    code: r.code,
+    totalM: r.total_m,
+    points: (r.points || []).map((p) => ({ lat: p.lat, lon: p.lon, cumM: p.cum_m })),
+  }))
+
+/**
  * The centrepiece. POST with a JSON body keyed by stop CODE - not a free-text
  * query, which is what the retired Member 1 backend took.
  *
@@ -491,48 +506,51 @@ export function busSocketUrl() {
  * from simulation_ml/seed/seed.py and are labelled as demo data in the UI.
  */
 export const DEMO_PLAN = {
-  origin: { id: 1, code: 'STOP_COLLEGE', name: 'City College', lat: 12.9716, lon: 77.5946 },
+  origin: {
+    id: 1,
+    code: 'STOP_RAJAJINAGAR',
+    name: 'ESI Hospital Rajajinagara (Towards Navarang)',
+    lat: 12.991236,
+    lon: 77.552485,
+  },
   destination: {
-    id: 10,
-    code: 'STOP_RAILWAY',
-    name: 'Railway Station',
-    lat: 12.9795,
-    lon: 77.5568,
+    id: 2,
+    code: 'STOP_MAJESTIC',
+    name: 'Railway Station, Majestic',
+    lat: 12.977507,
+    lon: 77.570768,
   },
   options: [
     {
       id: 'route-1',
       routeId: 1,
       code: '21A',
-      name: 'College to Railway Station',
-      etaMin: 12,
-      etaScheduledMin: 11,
+      name: 'Rajajinagar - Electronic City',
+      etaMin: 10,
+      etaScheduledMin: 9,
       delayMin: 1,
       crowd: 'medium',
-      load: 30,
+      load: 35,
       capacity: 50,
-      ratio: 0.6,
+      ratio: 0.7,
       wheelchair: true,
       lowFloor: true,
-      score: 48.0,
+      score: 52.0,
       // Same shape mapOption() produces, so components can rely on the key
       // existing. Null means "no model metadata", never a zeroed-out stand-in.
       prediction: null,
       stops: [
-        { stopId: 1, name: 'City College', etaMin: 12 },
-        { stopId: 2, name: 'Central Library', etaMin: 9 },
-        { stopId: 5, name: 'Main Road', etaMin: 5 },
-        { stopId: 9, name: 'Majestic (Central)', etaMin: 2 },
-        { stopId: 10, name: 'Railway Station', etaMin: 0 },
+        { stopId: 1, name: 'ESI Hospital Rajajinagara (Towards Navarang)', etaMin: 10 },
+        { stopId: 2, name: 'Railway Station, Majestic', etaMin: 0 },
       ].map((s) => ({ ...s, accessible: true })),
     },
     {
       id: 'route-2',
       routeId: 2,
       code: '7B',
-      name: 'College to Railway Station (via Market)',
-      etaMin: 21,
-      etaScheduledMin: 18,
+      name: 'Yeshwanthpur - Koramangala',
+      etaMin: 16,
+      etaScheduledMin: 13,
       delayMin: 3,
       crowd: 'low',
       load: 12,
@@ -540,13 +558,11 @@ export const DEMO_PLAN = {
       ratio: 0.24,
       wheelchair: false,
       lowFloor: false,
-      score: 55.8,
+      score: 30.4,
       prediction: null,
       stops: [
-        { stopId: 1, name: 'City College', etaMin: 21 },
-        { stopId: 3, name: 'KR Market', etaMin: 12 },
-        { stopId: 9, name: 'Majestic (Central)', etaMin: 4 },
-        { stopId: 10, name: 'Railway Station', etaMin: 0 },
+        { stopId: 1, name: 'ESI Hospital Rajajinagara (Towards Navarang)', etaMin: 16 },
+        { stopId: 2, name: 'Railway Station, Majestic', etaMin: 0 },
       ].map((s) => ({ ...s, accessible: true })),
     },
   ],

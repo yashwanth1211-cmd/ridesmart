@@ -72,6 +72,29 @@ paths:
         "404":
           description: Route not found
 
+  /api/routes/{route_id}/shape:
+    get:
+      tags: [routes]
+      summary: Real road geometry for a route
+      description: >
+        The route's OSRM road polyline in travel order. The map draws this and
+        the simulator walks it, so the drawn line is the road the bus is on.
+        Stop coordinates alone are not a route - adjacent stops can be
+        kilometres apart with a lake or a park between them.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Polyline vertices in travel order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RouteShape" }
+        "404":
+          description: Route not found
+
   /api/stops:
     get:
       tags: [routes]
@@ -220,21 +243,42 @@ components:
       required: [id, code, name, lat, lon]
       properties:
         id: { type: integer, example: 1 }
-        code: { type: string, example: STOP_COLLEGE }
-        name: { type: string, example: City College }
-        lat: { type: number, format: double, example: 12.9716 }
-        lon: { type: number, format: double, example: 77.5946 }
+        code: { type: string, example: STOP_RAJAJINAGAR }
+        name: { type: string, example: "ESI Hospital Rajajinagara (Towards Navarang)" }
+        lat: { type: number, format: double, example: 12.991236 }
+        lon: { type: number, format: double, example: 77.552485 }
         accessible: { type: boolean, example: true }
 
     Route:
       type: object
       required: [id, code, name]
       properties:
-        id: { type: integer, example: 21 }
+        id: { type: integer, example: 1 }
         code: { type: string, example: "21A" }
-        name: { type: string, example: College to Railway Station }
+        name: { type: string, example: Rajajinagar - Electronic City }
         direction: { type: string, enum: [up, down], example: up }
-        stop_count: { type: integer, example: 4 }
+        stop_count: { type: integer, example: 9 }
+
+    ShapePoint:
+      type: object
+      required: [seq, lat, lon, cum_m]
+      properties:
+        seq: { type: integer, example: 0 }
+        lat: { type: number, format: double, example: 12.991236 }
+        lon: { type: number, format: double, example: 77.552485 }
+        cum_m: { type: number, format: double, example: 0.0 }
+
+    RouteShape:
+      type: object
+      required: [route_id, code, total_m, point_count, points]
+      properties:
+        route_id: { type: integer, example: 1 }
+        code: { type: string, example: "21A" }
+        total_m: { type: number, format: double, example: 51640.2 }
+        point_count: { type: integer, example: 269 }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/ShapePoint" }
 
     RouteStop:
       type: object
@@ -274,11 +318,11 @@ components:
         from:
           type: string
           description: Stop code
-          example: STOP_COLLEGE
+          example: STOP_RAJAJINAGAR
         to:
           type: string
           description: Stop code
-          example: STOP_RAILWAY
+          example: STOP_MAJESTIC
         accessibility_only:
           type: boolean
           default: false

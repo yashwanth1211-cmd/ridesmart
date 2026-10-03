@@ -27,8 +27,27 @@ class TestSeedData:
     def test_seed_has_three_routes(self, session):
         assert session.query(Route).count() == 3
 
-    def test_seed_has_twelve_stops(self, session):
-        assert session.query(Stop).count() == 12
+    def test_seed_has_real_stops(self, session):
+        # 19 real OSM stops, not the 12 hand-written placeholders.
+        assert session.query(Stop).count() == 19
+
+    def test_stops_have_real_coordinates(self, session):
+        """Every stop must sit inside the Bengaluru bbox the data was drawn from."""
+        for stop in session.query(Stop).all():
+            assert 12.8 <= stop.lat <= 13.1, f"{stop.code} latitude out of range"
+            assert 77.5 <= stop.lon <= 77.8, f"{stop.code} longitude out of range"
+
+    def test_every_route_has_real_road_geometry(self, session):
+        """Routes must carry OSRM road geometry, and it must be non-degenerate.
+
+        A route whose polyline is just its two endpoints would put buses back
+        on straight lines through buildings, which is the bug this replaced.
+        """
+        for route in session.query(Route).all():
+            pts = sorted(route.shape_points, key=lambda p: (p.leg, p.seq))
+            assert len(pts) >= 10, f"{route.code} has only {len(pts)} shape points"
+            assert pts[-1].cum_m > 1000, f"{route.code} shape is not >1 km"
+            assert pts[0].cum_m == 0.0
 
     def test_all_trips_are_active(self, session):
         assert session.query(Trip).filter_by(status="active").count() == 3
@@ -39,9 +58,11 @@ class TestSeedData:
             assert seqs == sorted(seqs), f"{route.code} stop order is wrong"
             assert len(seqs) >= 2
 
-    def test_college_and_railway_share_two_routes(self, session):
-        """The demo depends on this: two options must exist for A -> D."""
-        target = {"STOP_COLLEGE", "STOP_RAILWAY"}
+    def test_demo_journey_is_shared_by_two_routes(self, session):
+        """The demo depends on this: two options must exist for the demo pair."""
+        from simulation_ml.seed.seed import DEMO_JOURNEY
+
+        target = set(DEMO_JOURNEY)
         codes = session.query(Route.code).all()
         assert len(codes) >= 2
         shared = []
@@ -50,7 +71,7 @@ class TestSeedData:
             names = {rs.stop.code for rs in route.ordered_stops()}
             if target.issubset(names):
                 shared.append(code)
-        assert len(shared) >= 2, f"only {shared} connect College to Railway"
+        assert len(shared) >= 2, f"only {shared} connect {sorted(target)}"
 
 
 class TestCrowdBanding:
@@ -80,9 +101,24 @@ class TestDemoContrast:
     """The whole product is "faster but packed vs slower but empty"."""
 
     def test_21a_is_faster_but_more_crowded_than_7b(self, session):
-        def route_stats(code):
+        """Compare the DEMO JOURNEY, not each route's full end-to-end run.
+
+        With real geography 7B is the shorter route overall (29.9 km vs
+        51.6 km), so whole-route duration no longer expresses "fast vs slow".
+        What the passenger actually sees is the ETA for their own trip, which
+        is the comparison that has to hold.
+        """
+        from simulation_ml.seed.seed import DEMO_JOURNEY
+
+        origin, destination = DEMO_JOURNEY
+
+        def journey_stats(code):
             route = session.query(Route).filter_by(code=code).first()
-            duration = max(rs.scheduled_offset_sec for rs in route.ordered_stops())
+            offsets = {rs.stop.code: rs.scheduled_offset_sec for rs in route.ordered_stops()}
+            assert origin in offsets and destination in offsets, f"{code} lacks the demo pair"
+            secs = offsets[destination] - offsets[origin]
+            assert secs > 0, f"{code} does not run {origin} -> {destination} forwards"
+
             load = (
                 session.query(Crowd)
                 .join(Trip, Crowd.trip_id == Trip.id)
@@ -90,12 +126,15 @@ class TestDemoContrast:
                 .first()
                 .load
             )
-            return duration, load
+            return secs, load
 
-        fast_dur, fast_load = route_stats("21A")
-        slow_dur, slow_load = route_stats("7B")
+        fast_secs, fast_load = journey_stats("21A")
+        slow_secs, slow_load = journey_stats("7B")
 
-        assert fast_dur < slow_dur, "21A must be the faster option"
+        assert fast_secs < slow_secs, (
+            f"21A must be the faster option for the demo journey "
+            f"({origin}->{destination}): {fast_secs}s vs {slow_secs}s"
+        )
         assert fast_load > slow_load, "21A must be the more crowded option"
         assert crowd_level_for(fast_load, 50) == "med"
         assert crowd_level_for(slow_load, 50) == "low"
@@ -128,6 +167,38 @@ class TestRoutes:
         body = r.json()
         assert len(body) >= 2
         assert [s["seq"] for s in body] == sorted(s["seq"] for s in body)
+
+    def test_route_shape_is_road_geometry_not_a_straight_line(self, client):
+        """The polyline must be denser than the stop list it replaces.
+
+        If shape points were just the stop coordinates the map would be back
+        to drawing straight lines through the city, so the geometry has to
+        carry many more vertices than there are stops.
+        """
+        for route in client.get("/api/routes").json():
+            stops = client.get(f"/api/routes/{route['id']}/stops").json()
+            r = client.get(f"/api/routes/{route['id']}/shape")
+            assert r.status_code == 200, r.text
+            shape = r.json()
+
+            assert shape["code"] == route["code"]
+            assert shape["point_count"] == len(shape["points"])
+            assert shape["point_count"] > len(stops), (
+                f"{route['code']}: {shape['point_count']} shape points for "
+                f"{len(stops)} stops means the polyline is just the stops"
+            )
+            assert shape["total_m"] > 1000
+            assert shape["points"][0]["cum_m"] == 0.0
+            # cumulative distance must never go backwards
+            cums = [p["cum_m"] for p in shape["points"]]
+            assert cums == sorted(cums)
+
+    def test_route_shape_404_uses_the_error_contract(self, client):
+        r = client.get("/api/routes/9999/shape")
+        assert r.status_code == 404
+        body = r.json()
+        assert body["code"] == "route_not_found"
+        assert isinstance(body["detail"], str)
 
 
 class TestTracking:
@@ -175,7 +246,7 @@ class TestErrorShape:
     def test_unknown_stop(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_MARS", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_MARS", "to": "STOP_MAJESTIC"},
         )
         self._assert_shape(r)
         assert r.json()["code"] == "unknown_stop"
@@ -214,7 +285,7 @@ class TestPlanner:
     def test_plan_returns_at_least_two_options(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
         )
         assert r.status_code == 200, r.text
         options = r.json()["options"]
@@ -225,7 +296,7 @@ class TestPlanner:
     def test_plan_options_match_the_contract(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
         )
         body = r.json()
         required = {
@@ -242,7 +313,7 @@ class TestPlanner:
     def test_plan_options_are_sorted_by_eta(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
         )
         etas = [o["eta_min"] for o in r.json()["options"]]
         assert etas == sorted(etas)
@@ -251,7 +322,7 @@ class TestPlanner:
         """21A should beat 7B on ETA while being worse on crowding."""
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
         )
         options = r.json()["options"]
         fast = min(options, key=lambda o: o["eta_min"])
@@ -261,7 +332,7 @@ class TestPlanner:
     def test_unknown_stop_is_a_clean_400(self, client):
         r = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_MARS", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_MARS", "to": "STOP_MAJESTIC"},
         )
         assert r.status_code == 400, r.text
         body = r.json()
@@ -273,8 +344,8 @@ class TestPlanner:
         r = client.post(
             "/api/routes/plan",
             json={
-                "from": "STOP_COLLEGE",
-                "to": "STOP_RAILWAY",
+                "from": "STOP_RAJAJINAGAR",
+                "to": "STOP_MAJESTIC",
                 "accessibility_only": True,
             },
         )
@@ -291,7 +362,7 @@ class TestCrowdOverride:
 
         before = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
         ).json()
 
         r = client.put(f"/api/trips/{trip_id}/crowd", json={"load": 2, "capacity": 50})
@@ -300,7 +371,7 @@ class TestCrowdOverride:
 
         after = client.post(
             "/api/routes/plan",
-            json={"from": "STOP_COLLEGE", "to": "STOP_RAILWAY"},
+            json={"from": "STOP_RAJAJINAGAR", "to": "STOP_MAJESTIC"},
         ).json()
 
         assert before != after, "changing crowd should change the recommendations"

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { config, demoPlan, getRouteStops, getStops, planJourney, setTripCrowd } from '@/lib/api'
+import { config, demoPlan, getRouteShape, getRouteStops, getStops, planJourney, setTripCrowd } from '@/lib/api'
 
 /**
  * The demo journey, matching the backend's seed data.
  * simulation_ml/seed/seed.py is built around exactly this pair: 21A is the
  * fast-but-packed option and 7B the slow-but-empty one, and the seed docstring
- * says "Plan STOP_COLLEGE -> STOP_RAILWAY and you get two options."
+ * says "Plan STOP_RAJAJINAGAR -> STOP_MAJESTIC and you get two options."
  */
-export const DEFAULT_JOURNEY = { from: 'STOP_COLLEGE', to: 'STOP_RAILWAY' }
+export const DEFAULT_JOURNEY = { from: 'STOP_RAJAJINAGAR', to: 'STOP_MAJESTIC' }
 
 /**
  * Stops for the from/to pickers. Fetched once - the stop list is reference
@@ -245,4 +245,45 @@ export function useRouteStops(routeId, { fromId, toId } = {}) {
 
     return stops.slice(iFrom, iTo + 1)
   }, [loaded, routeId, fromId, toId])
+}
+
+/**
+ * The selected route's real road polyline.
+ *
+ * Same stale-guard shape as useRouteStops: geometry belonging to a previously
+ * selected route must never be drawn under the new one, so the routeId travels
+ * with the data and a mismatch is resolved during render rather than with a
+ * synchronous setState that would cascade an extra render per selection.
+ *
+ * Returns [] when there is no geometry, which lets the map fall back to joining
+ * stop coordinates instead of drawing nothing at all.
+ */
+export function useRouteShape(routeId) {
+  const [loaded, setLoaded] = useState({ routeId: null, points: [] })
+  const requestId = useRef(0)
+
+  useEffect(() => {
+    if (!routeId) return undefined
+
+    const controller = new AbortController()
+    const id = ++requestId.current
+
+    getRouteShape(routeId, { signal: controller.signal })
+      .then((shape) => {
+        if (controller.signal.aborted || id !== requestId.current) return
+        setLoaded({ routeId, points: shape.points })
+      })
+      .catch((err) => {
+        if (controller.signal.aborted || err?.name === 'AbortError') return
+        if (id !== requestId.current) return
+        setLoaded({ routeId, points: [] })
+      })
+
+    return () => controller.abort()
+  }, [routeId])
+
+  return useMemo(() => {
+    if (!routeId || loaded.routeId !== routeId) return []
+    return loaded.points
+  }, [loaded, routeId])
 }

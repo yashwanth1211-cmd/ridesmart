@@ -139,6 +139,11 @@ class Route(Base):
         order_by="RouteStop.seq",
         cascade="all, delete-orphan",
     )
+    shape_points: Mapped[list["RouteShapePoint"]] = relationship(
+        back_populates="route",
+        order_by="RouteShapePoint.leg, RouteShapePoint.seq",
+        cascade="all, delete-orphan",
+    )
     trips: Mapped[list["Trip"]] = relationship(back_populates="route")
 
     @property
@@ -188,6 +193,46 @@ class RouteStop(Base):
             "scheduled_offset_sec": self.scheduled_offset_sec,
             "stop": self.stop.as_dict(),
         }
+
+
+class RouteShapePoint(Base):
+    """One vertex of a route's real road polyline.
+
+    The simulator advances a bus ALONG this polyline rather than drawing a
+    straight line between consecutive stops, so buses travel on roads instead of
+    through buildings. Points are ordered by `leg` (which stop-to-stop hop they
+    belong to) then `seq` (position within that hop).
+
+    Coordinates come from OSRM via simulation_ml/tools/build_real_routes.py and
+    are committed as data, so nothing here depends on a routing service at
+    runtime. `cum_m` is the distance from the start of the whole route to this
+    point, precomputed by the seed: it lets the simulator turn a 0-1 progress
+    fraction into an exact point on the shape without walking the polyline.
+    """
+
+    __tablename__ = "route_shape_point"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    route_id: Mapped[int] = mapped_column(
+        ForeignKey("route.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    leg: Mapped[int] = mapped_column(
+        Integer, nullable=False, doc="Index of the stop-to-stop hop this point belongs to"
+    )
+    seq: Mapped[int] = mapped_column(
+        Integer, nullable=False, doc="Position within the leg, 0-based"
+    )
+    lat: Mapped[float] = mapped_column(Float, nullable=False)
+    lon: Mapped[float] = mapped_column(Float, nullable=False)
+    cum_m: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False,
+        doc="Metres from the first vertex of the whole route",
+    )
+
+    def as_coord(self) -> tuple[float, float]:
+        return self.lat, self.lon
+
+    route: Mapped[Route] = relationship(back_populates="shape_points")
 
 
 class Bus(Base):
@@ -392,6 +437,7 @@ __all__ = [
     "Stop",
     "Route",
     "RouteStop",
+    "RouteShapePoint",
     "Bus",
     "Trip",
     "Schedule",

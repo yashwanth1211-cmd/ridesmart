@@ -8,7 +8,7 @@ import {
   Clock,
 } from '@phosphor-icons/react'
 import { DEFAULT_JOURNEY } from '@/config/constants'
-import { useJourney, useRouteStops, useStops } from '@/lib/useJourney'
+import { useJourney, useRouteShape, useRouteStops, useStops } from '@/lib/useJourney'
 import { useLiveBuses } from '@/lib/useLiveBuses'
 import LiveMap from '@/components/map/LiveMap'
 import AuthorityPanel from './AuthorityPanel'
@@ -130,7 +130,7 @@ function EtaCard({ journey, buses }) {
   )
 }
 
-function MapView({ buses, journey, routeStops, transport, error, query }) {
+function MapView({ buses, journey, routeStops, routeShape, transport, error, query }) {
   const { plan, selected, source } = journey
   const [focusedBusId, setFocusedBusId] = useState(null)
 
@@ -153,6 +153,7 @@ function MapView({ buses, journey, routeStops, transport, error, query }) {
         <LiveMap
           buses={buses}
           routeStops={routeStops}
+          routeShape={routeShape}
           origin={plan.origin}
           destination={plan.destination}
           selectedRouteCode={selected?.code ?? null}
@@ -314,6 +315,10 @@ export default function Dashboard() {
     toId: journey.plan.destination?.id,
   })
 
+  // Real road geometry for the selected route. The map draws this instead of
+  // joining stop coordinates, which would cut straight across the city.
+  const routeShape = useRouteShape(journey.selected?.routeId)
+
   return (
     <div className="relative flex h-full min-h-0 flex-col gap-3 p-3 md:p-4">
       {/* The product UI video as the base layer, muted and dimmed just enough
@@ -399,7 +404,8 @@ export default function Dashboard() {
             <MapView
               buses={buses}
               journey={journey}
-              routeStops={routeStops}
+routeStops={routeStops}
+              routeShape={routeShape}
               transport={transport}
               error={busError}
               query={query}

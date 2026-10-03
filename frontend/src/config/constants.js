@@ -76,4 +76,4 @@ export const MAP_STYLE = {
 }
 
 /** Journey planned on first load, matching the seed's deliberate 21A vs 7B contrast. */
-export const DEFAULT_JOURNEY = { from: 'STOP_COLLEGE', to: 'STOP_RAILWAY' }
+export const DEFAULT_JOURNEY = { from: 'STOP_RAJAJINAGAR', to: 'STOP_MAJESTIC' }
