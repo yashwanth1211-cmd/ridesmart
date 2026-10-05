@@ -42,8 +42,17 @@ import { CROWD_LEVELS, MAP_DEFAULTS, MAP_STYLE } from '@/config/constants'
  *    layer keeps hundreds of vehicles cheap and avoids React reconciliation on
  *    the map subtree entirely.
  *  - The route polyline comes from useRouteShape (real OSRM road geometry), not
- *    from PlanOption.stops, which carries no coordinates. Stop MARKERS still come
- *    from useRouteStops.
+ *    from PlanOption.stops, which carries no coordinates. Stop MARKERS come
+ *    from useRouteStops and are drawn as their own GeoJSON source.
+ *
+ * SCOPE. Every layer here draws ONE route or nothing at all. There is exactly
+ * one 'route' source, one 'stops' source and one 'buses' source, each replaced
+ * wholesale through setData(), so a previous selection cannot survive the next
+ * one. With selectedRouteId null the map is emptied: no polyline, no stops, no
+ * buses. Do not add a layer that ignores selectedRouteId - an earlier version
+ * of this file drew the whole network because selection was only ever applied
+ * as a paint filter (a highlight halo), which changed how a bus looked without
+ * ever removing one.
  */
 
 const EMPTY = { type: 'FeatureCollection', features: [] }
@@ -67,6 +76,7 @@ export default function LiveMap({
   routeShape = [],
   origin = null,
   destination = null,
+  selectedRouteId = null,
   selectedRouteCode = null,
   onSelectBus = null,
   className = '',
@@ -78,7 +88,16 @@ export default function LiveMap({
   const popupRef = useRef(null)
   const fittedRouteRef = useRef('')
 
-  latest.current = { buses, routeStops, routeShape, origin, destination, selectedRouteCode, onSelectBus }
+  latest.current = {
+    buses,
+    routeStops,
+    routeShape,
+    origin,
+    destination,
+    selectedRouteId,
+    selectedRouteCode,
+    onSelectBus,
+  }
 
   /** Pushes the current ref'd props into the map's sources. Safe to call often. */
   const sync = () => {
@@ -86,18 +105,33 @@ export default function LiveMap({
     if (!map || !readyRef.current) return
 
     const {
-      buses: b,
+      buses: allBuses,
       routeStops: rs,
       routeShape: shape,
       origin: o,
       destination: d,
+      selectedRouteId: routeId,
       selectedRouteCode: code,
       onSelectBus: cb,
     } = latest.current
 
+    /*
+      NOTHING is drawn without a selection, and only the selected route's buses
+      are drawn once there is one.
+
+      useLiveBuses already scopes its fetch to routeId, so this filter should
+      never remove anything. It stays because it is the last line of defence
+      between a prop and the map: the previous version of this file had no such
+      guard and relied purely on the feed being unfiltered-but-visually-dimmed,
+      which is why selecting a route still drew the whole network. A future
+      caller passing a fleet-wide array cannot regress that.
+    */
+    const b = routeId == null ? [] : allBuses.filter((x) => x.routeId === routeId)
+
     const busGeo = toCollection(b, (x) => ({
       busId: x.busId,
       tripId: x.tripId,
+      routeId: x.routeId,
       routeCode: x.routeCode ?? '',
       reg: x.reg ?? '',
       crowd: x.crowd,
@@ -111,13 +145,19 @@ export default function LiveMap({
     // Stop markers still come from routeStops, but the path between them comes
     // from OSRM geometry so the line on screen is the road the bus drives.
     // Falls back to joining the stops if geometry is missing.
-    const shapeCoords = shape
-      .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
-      .map((p) => [p.lon, p.lat])
+    const shapeCoords =
+      routeId == null
+        ? []
+        : shape
+            .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
+            .map((p) => [p.lon, p.lat])
 
-    const stopCoords = rs
-      .filter((s) => Number.isFinite(s.lon) && Number.isFinite(s.lat))
-      .map((s) => [s.lon, s.lat])
+    const stopCoords =
+      routeId == null
+        ? []
+        : rs
+            .filter((s) => Number.isFinite(s.lon) && Number.isFinite(s.lat))
+            .map((s) => [s.lon, s.lat])
 
     const coords = shapeCoords.length >= 2 ? shapeCoords : stopCoords
 
@@ -133,27 +173,51 @@ export default function LiveMap({
           },
     )
 
+    // Stop markers for the selected route only. This source did not exist
+    // before: routeStops fed only the polyline fallback, so the map showed no
+    // stops at all. One source, replaced wholesale by setData, so switching
+    // routes cannot leave the previous route's stops behind.
+    map.getSource('stops')?.setData(
+      toCollection(routeId == null ? [] : rs, (s) => ({
+        routeId,
+        stopId: s.id ?? null,
+        name: s.name ?? '',
+        accessible: Boolean(s.accessible),
+      })),
+    )
+
     // Frame the route the moment its coordinates resolve - on the very first
     // mount routeStops usually arrive AFTER the map's 'load' event, so an
     // early fitBounds here would be skipped and the map would sit on the
-    // generic default viewport until the view happened to remount. Tracking a
-    // signature of the coordinates refits only when the route actually changes,
-    // never when a bus ticks, and never fights a pan the user has done since.
-    if (coords.length > 1) {
-      const signature = coords.map((c) => `${c[0].toFixed(6)},${c[1].toFixed(6)}`).join('|')
-      if (signature !== fittedRouteRef.current) {
-        fittedRouteRef.current = signature
-        const bounds = new LngLatBounds()
-        coords.forEach((c) => bounds.extend(c))
-        map.fitBounds(bounds, { padding: 90, maxZoom: 15, duration: 900 })
-      }
+    // generic default viewport until the view happened to remount.
+    //
+    // Keyed on routeId, NOT on a coordinate signature. A signature cannot
+    // distinguish "the user picked a different route" from "this route has no
+    // geometry yet", so selecting a route whose data had not resolved left the
+    // viewport fitted to the previous route. The routeId also has to be reset
+    // when the selection is cleared, or re-picking the same route later would
+    // match the stale ref and skip the refit entirely.
+    if (routeId == null) {
+      fittedRouteRef.current = ''
+    } else if (coords.length > 1 && fittedRouteRef.current !== String(routeId)) {
+      fittedRouteRef.current = String(routeId)
+      const bounds = new LngLatBounds()
+      coords.forEach((c) => bounds.extend(c))
+      map.fitBounds(bounds, { padding: 90, maxZoom: 15, duration: 900 })
     }
-    map.getSource('endpoints')?.setData(toCollection([o, d].filter(Boolean), (s) => ({ code: s.code })))
+
+    // Endpoints belong to the journey, not the route, so they follow
+    // plan.origin/plan.destination. With no route selected there is no journey
+    // worth marking.
+    map
+      .getSource('endpoints')
+      ?.setData(toCollection(routeId == null ? [] : [o, d].filter(Boolean), (s) => ({ code: s.code })))
 
     // The selected route's vehicles get a halo so the passenger can pick their
-    // own bus out of the traffic.
+    // own bus out of the traffic. With no selection both filters hide
+    // everything, which is what empties the map.
     map.setFilter('bus-halo', ['==', ['get', 'routeCode'], code ?? '__none__'])
-    map.setFilter('bus-points', ['!=', ['get', 'routeCode'], code ?? '__none__'])
+    map.setFilter('bus-points', ['!=', ['get', 'routeCode'], '__none__'])
 
     if (cb) {
       map.__onSelectBus = cb
@@ -188,6 +252,22 @@ export default function LiveMap({
         type: 'line',
         source: 'route',
         paint: { 'line-color': '#4f8cff', 'line-width': 3.5, 'line-opacity': 0.95 },
+      })
+
+      // Stops for the selected route. Added below the line layers so a marker
+      // always sits on top of the road it belongs to, and above the bus layer
+      // being added next so a vehicle is never hidden behind its own stop.
+      map.addSource('stops', { type: 'geojson', data: EMPTY })
+      map.addLayer({
+        id: 'stop-halo',
+        type: 'circle',
+        source: 'stops',
+        paint: {
+          'circle-radius': 7,
+          'circle-color': '#0b1020',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#e6ecff',
+        },
       })
 
       map.addSource('buses', { type: 'geojson', data: EMPTY })
@@ -240,6 +320,8 @@ export default function LiveMap({
         paint: { 'text-color': '#e6ecff', 'text-halo-color': '#0b1020', 'text-halo-width': 1.2 },
       })
 
+      // Origin and destination sit on top of everything so they are never
+      // hidden behind a stop or a vehicle.
       map.addSource('endpoints', { type: 'geojson', data: EMPTY })
       map.addLayer({
         id: 'endpoints',
@@ -338,7 +420,9 @@ export default function LiveMap({
     <div className={`relative overflow-hidden ${className}`}>
       <div ref={containerRef} className="h-full w-full" />
       <p className="pointer-events-none absolute right-2 bottom-2 rounded bg-black/40 px-1.5 py-0.5 text-[10px] text-gray-400">
-        {buses.length} bus{buses.length === 1 ? '' : 'es'} tracked
+        {selectedRouteId == null
+          ? 'No route selected'
+          : `${buses.length} bus${buses.length === 1 ? '' : 'es'} on ${selectedRouteCode ?? 'route'}`}
       </p>
     </div>
   )

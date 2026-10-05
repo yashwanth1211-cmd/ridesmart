@@ -24,6 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from database.api.buses import router as buses_router
 from database.api.dashboard import router as dashboard_router
+from database.api.journey import router as journey_router
 from database.api.planning import router as planning_router
 from database.api.routes import router as routes_router
 from database.api.routes import stops_router
@@ -108,6 +109,7 @@ app.add_middleware(
 app.include_router(routes_router, prefix="/api")
 app.include_router(stops_router, prefix="/api")
 app.include_router(planning_router, prefix="/api")
+app.include_router(journey_router, prefix="/api")
 app.include_router(buses_router, prefix="/api")
 app.include_router(trip_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")

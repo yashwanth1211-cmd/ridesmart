@@ -6,31 +6,93 @@ import {
   Sparkle,
   WarningCircle,
   CheckCircle,
+  Clock,
+  Lightning,
 } from '@phosphor-icons/react'
 import CrowdIndicator from './CrowdIndicator'
 import DelayBadge from './DelayBadge'
-import OptionCard from './OptionCard'
+import OptionCard, { TransferCard } from './OptionCard'
 import PredictionBadge from './PredictionBadge'
 import SourceBadge from './SourceBadge'
 import StopTimeline from './StopTimeline'
 import { useTripEtas } from '@/lib/useTripEtas'
 
 /**
- * The passenger journey planner: pick two stops, get every ranked option.
+ * The passenger journey planner: pick two stops, get every ranked bus.
  *
  * Presentational on purpose. The journey state is owned by the Dashboard shell
  * so the live map can draw the same selected route without a second useJourney
  * instance polling the API independently.
  *
- * Two rules from the contract are treated as non-negotiable:
+ * Three rules are treated as non-negotiable:
  *
  *  1. "The UI must render every entry - showing one option defeats the purpose
- *     of the feature." The list never collapses to a single winner; the fastest
- *     is preselected but every alternative stays visible and one click away.
- *  2. The seed's whole point is that V1 is faster-but-packed and V2 is
- *     slower-but-empty. Neither dominates, so ranking on ETA alone and hiding
+ *     of the feature." The list never collapses to a single winner; the best
+ *     ranked bus is preselected but every alternative stays visible and one
+ *     click away.
+ *  2. The seed's whole point is that one bus is faster-but-packed and another is
+ *     slower-but-empty. Neither dominates, so ranking on arrival alone and hiding
  *     the empty one would delete the decision the product exists to present.
+ *     Hence the explicit ETA / least-crowded toggle rather than one hidden score.
+ *  3. An empty result is an ANSWER and is worded as one. The backend knows
+ *     whether it is "same stop", "nothing connects these" or "you need one
+ *     transfer", and each deserves different words - suggesting a swap is
+ *     helpful for one and nonsense for another.
+ *
+ * Options are BUSES, not routes (GET /api/journey). That is what lets the panel
+ * name a registration, say how long that vehicle will take to arrive, and drop
+ * the ones that have already passed the boarding stop.
  */
+
+/**
+ * The two rankings, as a real control rather than a hidden score.
+ *
+ * "Least crowded" is not a sort key nobody can see - it is the answer to "I would
+ * rather wait or travel longer than stand in a packed bus", which is a decision
+ * only the passenger can make. The backend's score is arrival time plus a
+ * crowding penalty; this makes both terms visible.
+ */
+function SortToggle({ sort, onSortChange, disabled = false }) {
+  const options = [
+    { id: 'eta', label: 'Soonest', icon: Lightning, hint: 'Rank by arrival time' },
+    {
+      id: 'crowd',
+      label: 'Least crowded',
+      icon: Clock,
+      hint: 'Rank by arrival time plus a crowding penalty',
+    },
+  ]
+
+  return (
+    <div
+      role="group"
+      aria-label="Rank journey options"
+      className="inline-flex items-center gap-0.5 rounded-lg border border-white/10 bg-black/40 p-0.5"
+    >
+      {options.map(({ id, label, icon: Icon, hint }) => {
+        const active = sort === id
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onSortChange(id)}
+            aria-pressed={active}
+            title={hint}
+            disabled={disabled}
+            className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] transition-colors disabled:opacity-40 ${
+              active
+                ? 'bg-amber-400/20 font-medium text-amber-200 ring-1 ring-amber-400/50'
+                : 'text-gray-400 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Icon size={12} />
+            {label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 function StopSelect({ label, value, stops, onChange, id }) {
   return (
@@ -66,16 +128,38 @@ export default function JourneyPlanner({
   onToChange,
   accessibilityOnly,
   onAccessibilityOnlyChange,
+  sort = 'eta',
+  onSortChange = () => {},
 }) {
   const [notice, setNotice] = useState(null)
 
-  const { plan, options, selected, selectOption, source, isLive, error, loading, overriding, overrideCrowd } =
-    journey
+  const {
+    plan,
+    options,
+    transfers,
+    message,
+    selected,
+    selectOption,
+    source,
+    isLive,
+    error,
+    loading,
+    overriding,
+    overrideCrowd,
+  } = journey
 
-  /** The live trip serving the selected route, needed for the crowd override. */
+  /**
+   * The live trip serving the selected bus, needed for the crowd override.
+   *
+   * Matched on the BUS, not the route. The planner now returns individual
+   * vehicles, so two buses on one corridor are two options and the demo trigger
+   * has to act on the one whose card is open. Matching on route code picked an
+   * arbitrary bus off the corridor - and with a hundred buses on the network,
+   * almost always the wrong one.
+   */
   const activeTrip = useMemo(() => {
-    if (!selected?.code) return null
-    return buses.find((b) => b.routeCode === selected.code && b.tripId) ?? null
+    if (selected?.busId == null) return null
+    return buses.find((b) => b.busId === selected.busId && b.tripId) ?? null
   }, [buses, selected])
 
   /*
@@ -92,13 +176,42 @@ export default function JourneyPlanner({
       result.ok
         ? {
             ok: true,
-            text: `${selected.code} set to ${load} passengers. Options re-planned.`,
+            text: `${selected.busReg ?? selected.code} set to ${load} passengers. Options re-planned.`,
           }
         : { ok: false, text: result.message },
     )
   }
 
   const sameStop = from === to
+
+  /**
+   * What to say when the list is empty.
+   *
+   * The backend's own wording wins when it sent one: it distinguishes "these are
+   * the same stop" from "nothing runs between these, try swapping" from "you
+   * need one transfer", and only the middle one is helped by a swap suggestion.
+   * `message` is only about the direct list being empty, so the presence of
+   * transfers is worth mentioning - otherwise a passenger who just changed the
+   * From/To pickers would read "no buses found" while a viable option is
+   * sitting right below.
+   */
+  const emptyState = (() => {
+    if (message) {
+      return {
+        headline: message,
+        hint: transfers.length
+          ? `There ${transfers.length === 1 ? 'is' : 'are'} ${transfers.length} one-transfer option${
+              transfers.length === 1 ? '' : 's'
+            } below.`
+          : null,
+      }
+    }
+    if (loading) return null
+    return {
+      headline: 'No buses found for this journey.',
+      hint: 'Try swapping the stops — a bus only runs one direction between two points.',
+    }
+  })()
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
@@ -133,14 +246,21 @@ export default function JourneyPlanner({
           </label>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
-          <SourceBadge source={source} error={error} />
-          {isLive && (
-            <span>
-              {options.length} option{options.length === 1 ? '' : 's'} · sorted by ETA
-            </span>
-          )}
-          {plan.generatedAt && <span>updated {new Date(plan.generatedAt).toLocaleTimeString()}</span>}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SortToggle sort={sort} onSortChange={onSortChange} disabled={loading && !isLive} />
+
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
+            <SourceBadge source={source} error={error} />
+            {isLive && (
+              <span>
+                {options.length} bus{options.length === 1 ? '' : 'es'}
+                {options.length === 0 ? '' : sort === 'crowd' ? ' · least crowded first' : ' · soonest first'}
+              </span>
+            )}
+            {plan.generatedAt && (
+              <span>updated {new Date(plan.generatedAt).toLocaleTimeString()}</span>
+            )}
+          </div>
         </div>
 
         {error && source === 'api' && (
@@ -164,14 +284,15 @@ export default function JourneyPlanner({
         {/* ---- ranked options ---- */}
         <section className="glass-panel flex min-h-0 flex-col gap-3 p-4">
           <header className="flex items-center justify-between gap-3">
-            <h2 className="text-[13px] font-medium text-white">Journey options</h2>
+            <h2 className="text-[13px] font-medium text-white">Buses you can catch</h2>
             <span className="text-[11px] text-gray-400">
               {loading ? 'Planning…' : `${options.length} found`}
             </span>
           </header>
 
           <p className="text-[11px] leading-relaxed text-gray-500">
-            Every option is shown, not just the fastest. Pick the trade-off that suits you right now.
+            Only buses going <em>this way</em> between these stops, and only ones still ahead of you.
+            Every one is listed — pick the trade-off that suits you.
           </p>
 
           <ul className="scroll-slim -mr-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-2">
@@ -186,14 +307,23 @@ export default function JourneyPlanner({
               </li>
             ))}
 
-            {options.length === 0 && !loading && (
+            {/*
+
+              One-transfer options, shown only when there is no direct bus. Not
+              offered alongside a direct option: suggesting a change to someone
+              who can simply take one bus is noise, and it buries the answer.
+            */}
+            {options.length === 0 &&
+              transfers.map((option) => (
+                <li key={option.id}>
+                  <TransferCard option={option} />
+                </li>
+              ))}
+
+            {options.length === 0 && emptyState && (
               <li className="rounded-lg border border-dashed border-white/10 px-4 py-8 text-center">
-                <p className="text-[13px] text-gray-300">
-                  No route connects these two stops in that direction.
-                </p>
-                <p className="mt-1 text-[11px] text-gray-500">
-                  Buses do not run backwards — try swapping them.
-                </p>
+                <p className="text-[13px] text-gray-300">{emptyState.headline}</p>
+                {emptyState.hint && <p className="mt-1 text-[11px] text-gray-500">{emptyState.hint}</p>}
               </li>
             )}
           </ul>
@@ -211,23 +341,63 @@ export default function JourneyPlanner({
                     <span className="ml-2 text-[13px] font-normal text-gray-300">{selected.name}</span>
                   ) : null}
                 </h2>
+                {selected.busReg && (
+                  <p className="text-[12px] text-gray-400">
+                    Bus {selected.busReg}
+                    {selected.busType ? ` · ${selected.busType}` : ''}
+                    {selected.direction
+                      ? ` · ${selected.direction === 'up' ? 'up' : 'down'} direction`
+                      : ''}
+                  </p>
+                )}
               </header>
 
+              {/*
+                TWO CLOCKS, because they answer two different questions and
+                conflating them is the bug this panel used to have. "Arriving in
+                0 min" was the wait for the bus to reach the stop where the
+                passenger was already standing, while the actual journey was an
+                hour away.
+
+                Both labels say what they measure, so neither number can be
+                misread as the other.
+              */}
               <div className="glass-inset flex items-end justify-between gap-3 p-3">
                 <div className="flex flex-col gap-1">
-                  <span className="text-[11px] tracking-wide text-gray-400 uppercase">Arriving in</span>
+                  <span className="text-[11px] tracking-wide text-gray-400 uppercase">
+                    Arrives at {plan.destination?.name ?? 'destination'}
+                  </span>
                   <span className="text-3xl leading-none font-medium tracking-tight text-white">
                     {selected.etaMin ?? '—'}
                     <span className="ml-1 text-[15px] font-normal text-gray-400">min</span>
                   </span>
                 </div>
-                <DelayBadge
-                  minutes={selected.delayMin}
-                  scheduledMin={selected.etaScheduledMin}
-                  predictedMin={selected.etaMin}
-                  size="md"
-                />
+                {Number.isFinite(selected.delayMin) ? (
+                  <DelayBadge minutes={selected.delayMin} size="md" />
+                ) : (
+                  <span className="text-[11px] text-gray-500">scheduled</span>
+                )}
               </div>
+
+              <dl className="grid grid-cols-2 gap-2">
+                <div className="glass-inset px-3 py-2">
+                  <dt className="text-[10px] tracking-wide text-gray-500 uppercase">
+                    Reaches you in
+                  </dt>
+                  <dd className="font-mono text-[16px] text-white">
+                    {selected.arrivesInMin === 0
+                      ? 'now'
+                      : `${selected.arrivesInMin} min`}
+                  </dd>
+                </div>
+                <div className="glass-inset px-3 py-2">
+                  <dt className="text-[10px] tracking-wide text-gray-500 uppercase">Ride time</dt>
+                  <dd className="font-mono text-[16px] text-white">
+                    {selected.journeyMin ?? '—'}
+                    {Number.isFinite(selected.journeyMin) ? ' min' : ''}
+                  </dd>
+                </div>
+              </dl>
 
               {/*
                 Prediction provenance sits directly under the authoritative ETA
@@ -243,19 +413,31 @@ export default function JourneyPlanner({
                   <PredictionBadge prediction={selected.prediction} />
                   {selected.prediction.trusted === false && (
                     <p className="text-[11px] leading-relaxed text-warn/90">
-                      The ETA above is the live figure. This is an experimental model estimate and is
+                      The time above is the live figure. This is an experimental model estimate and is
                       not validated against real arrival times.
                     </p>
                   )}
                 </div>
               )}
 
-              <CrowdIndicator
-                level={selected.crowd}
-                load={selected.load}
-                capacity={selected.capacity}
-                ratio={selected.ratio}
-              />
+              {/*
+                Crowding is only meaningful for a real vehicle. A timetable entry
+                has no passengers yet, and drawing an "empty" bar for a bus that
+                has not departed would invent the one reading the passenger is
+                most likely to act on.
+              */}
+              {selected.kind === 'live' ? (
+                <CrowdIndicator
+                  level={selected.crowd}
+                  load={selected.load}
+                  capacity={selected.capacity}
+                  ratio={selected.ratio}
+                />
+              ) : (
+                <div className="glass-inset px-3 py-2.5 text-[11px] text-gray-400">
+                  Not running yet — crowding is not known until it departs.
+                </div>
+              )}
 
               <div>
                 <h3 className="mb-2 text-[11px] tracking-wide text-gray-400 uppercase">
@@ -278,8 +460,8 @@ export default function JourneyPlanner({
                 {activeTrip ? (
                   <>
                     <p className="text-[11px] text-gray-500">
-                      Trip {activeTrip.tripId} · {activeTrip.reg ?? 'bus'} currently reports{' '}
-                      {activeTrip.load ?? '—'}/{activeTrip.capacity ?? '—'}.
+                      {selected.busReg ?? selected.code} (trip {activeTrip.tripId}) currently
+                      reports {activeTrip.load ?? '—'}/{activeTrip.capacity ?? '—'}.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <button

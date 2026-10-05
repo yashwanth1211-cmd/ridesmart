@@ -54,13 +54,22 @@ def _next_stop_name(trip: Trip, seq_progress: float) -> str | None:
     return ordered[index].stop.name
 
 
-def active_positions(db: Session) -> list[dict]:
+def active_positions(db: Session, route_id: int | None = None) -> list[dict]:
     """Newest position for every active trip.
 
     The simulator writes one `location` row per tick per bus, so the latest row
     per trip is the current position.
+
+    route_id narrows the result to one route. The live map is scoped to the
+    route the passenger picked, so pushing every bus on the network down that
+    socket wastes bandwidth and leaves the client holding vehicles it must
+    then filter out client-side. None keeps the fleet-wide behaviour that
+    /api/buses/active and an unscoped /api/ws/buses have always had.
     """
-    trips = db.query(Trip).filter(Trip.status == "active").all()
+    query = db.query(Trip).filter(Trip.status == "active")
+    if route_id is not None:
+        query = query.filter(Trip.route_id == route_id)
+    trips = query.all()
     results = []
 
     for trip in trips:

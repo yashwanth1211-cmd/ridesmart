@@ -11,9 +11,12 @@ OWNER: Member 5 (temporarily, while Member 4 is unavailable).
 WHAT IT DOES, EVERY TICK
 ------------------------
 1. Advances every active trip along its route_stop sequence.
-2. Writes a `location` row (lat, lon, speed, heading, seq_progress).
+2. Writes a `location` row: lat, lon, speed, heading, seq_progress, plus the
+   current stop, the next stop and how many seconds behind the timetable the
+   bus is running.
 3. Randomises speed per trip so predicted ETA diverges from the timetable.
-4. Occasionally emits a `crowd` row with a boarding ramp.
+4. Occasionally emits a `crowd` row, with occupancy scaled up during the
+   08:00-10:00 and 17:00-19:00 peaks (IST) and down off-peak.
 5. Refreshes `segment_stat` from observed travel times, so Member 1's ETA
    baseline visibly improves while the demo runs.
 
@@ -47,6 +50,7 @@ from simulation_ml.db.models import (  # noqa: E402
     as_utc,
     crowd_level_for,
     get_sessionmaker,
+    peak_load_for,
     utcnow,
 )
 
@@ -191,7 +195,8 @@ class TripSimulator:
     def __init__(self, trip_id: int, route_id: int, route_code: str,
                  bus_id: int, capacity: int,
                  stops: list[StopPoint], rng: random.Random,
-                 speed_factor: float, path: RoutePath | None = None):
+                 speed_factor: float, path: RoutePath | None = None,
+                 sched_offsets: list[int] | None = None):
         if len(stops) < 2:
             raise ValueError(f"route {route_code} needs at least 2 stops")
 
@@ -205,6 +210,12 @@ class TripSimulator:
         self.speed_factor = speed_factor
         self.path = path
 
+        # Timetable offset per stop, in the same order as self.stops. Used to
+        # work out how far behind schedule this bus is, which nothing in the
+        # telemetry said before: seq_progress says how FAR along the route the
+        # bus is, and these offsets say how long that should have taken.
+        self.sched_offsets = list(sched_offsets or [])
+
         self.progress = 0.0
         self.last_stop_seq = 0
         self.last_tick_ts = utcnow()
@@ -217,14 +228,30 @@ class TripSimulator:
         self.segment_elapsed = 0.0
         self.finished_segment: tuple[int, int, float] | None = None
 
-        # per-stop crowd profile, clamped so no stop exceeds capacity
-        self.crowd_profile = [rng.randint(0, self.capacity) for _ in stops]
+        # per-stop crowd profile, clamped so no stop exceeds capacity.
+        self.crowd_profile = self._new_crowd_profile()
+
+    def _new_crowd_profile(self) -> list[int]:
+        """Off-peak occupancy per stop, as an absolute passenger count.
+
+        Stored OFF-PEAK and scaled to the hour of day at emit time, so the same
+        bus is empty at 15:00 and packed at 09:00 instead of being permanently
+        whatever it happened to be when the process started.
+        """
+        # 20-65% of capacity off-peak. The wide end is a bus that is busy most of
+        # the day; the narrow end is an early-morning empty one.
+        base = int(self.capacity * self.rng.uniform(0.20, 0.65))
+        return [
+            max(0, min(self.capacity, base + self.rng.randint(-6, 6)))
+            for _ in self.stops
+        ]
 
     @classmethod
     def from_trip(cls, trip, rng: random.Random, speed_factor: float) -> "TripSimulator":
         """Build from a live ORM Trip. Must be called with an open session."""
         route = trip.route
         bus = trip.bus
+        ordered_rs = sorted(route.route_stops, key=lambda r: r.seq)
         stops = [
             StopPoint(
                 id=rs.stop.id,
@@ -234,7 +261,7 @@ class TripSimulator:
                 lon=rs.stop.lon,
                 accessible=bool(rs.stop.accessible),
             )
-            for rs in sorted(route.route_stops, key=lambda r: r.seq)
+            for rs in ordered_rs
         ]
 
         # Real road geometry, when the seed provided it. Detached into plain
@@ -254,6 +281,7 @@ class TripSimulator:
             rng=rng,
             speed_factor=speed_factor,
             path=path,
+            sched_offsets=[rs.scheduled_offset_sec for rs in ordered_rs],
         )
 
     # -- helpers ----------------------------------------------------------
@@ -267,6 +295,47 @@ class TripSimulator:
         """Jittered speed so ETA never matches the timetable exactly."""
         base = 26.0
         return max(4.0, base + self.rng.gauss(0, 6.0))
+
+    def scheduled_elapsed_sec(self) -> float:
+        """Timetable seconds for the distance covered so far.
+
+        progress is a fraction of DISTANCE, not of the stop list, so the
+        timetable has to be read at the same scale. With real geometry that is
+        the shape's stop_cum_m; without it, evenly spaced stop indices are the
+        best available approximation and are labelled as such.
+        """
+        offsets = self.sched_offsets
+        if len(offsets) < 2:
+            return 0.0
+
+        if self.path is not None and self.path.stop_cum_m:
+            targets = self.path.stop_cum_m
+            point = self.progress * self.path.total_m
+        else:
+            span = len(self.stops) - 1
+            targets = [float(i) for i in range(len(self.stops))]
+            point = self.progress * span
+
+        if len(targets) != len(offsets):
+            return 0.0
+
+        for i in range(len(targets) - 1):
+            if point <= targets[i + 1] or i == len(targets) - 2:
+                span = targets[i + 1] - targets[i]
+                t = 0.0 if span <= 0 else (point - targets[i]) / span
+                return offsets[i] + (offsets[i + 1] - offsets[i]) * t
+
+        return float(offsets[-1])
+
+    def delay_sec(self) -> float:
+        """Seconds behind the timetable. Negative means running early.
+
+        elapsed_sec is SIMULATED time, so this is a delay on the simulated
+        clock. That is the clock the whole demo runs on: the ETAs the planner
+        shows are computed from the same accumulated timings, so a bus that
+        drifts here drifts there too.
+        """
+        return self.elapsed_sec - self.scheduled_elapsed_sec()
 
     # -- main step --------------------------------------------------------
     def step(self, dt_sec: float) -> dict:
@@ -316,6 +385,16 @@ class TripSimulator:
             "speed_kmph": speed,
             "heading": heading,
             "seq_progress": round(self.progress, 4),
+            # Written straight into the location row. The journey planner needs
+            # "is the origin still ahead of this bus" to be answerable without
+            # re-walking the shape on every request, and a reader that has to
+            # recompute it from seq_progress and a stop list can disagree with
+            # the simulator the moment either side rounds differently.
+            "current_stop_id": from_stop.id,
+            "next_stop_id": to_stop.id,
+            "current_stop_name": from_stop.name,
+            "next_stop_name": to_stop.name,
+            "delay_sec": round(self.delay_sec(), 1),
             "ts": utcnow(),
             "_from_stop_id": from_stop.id,
             "_next_stop_id": to_stop.id,
@@ -329,7 +408,7 @@ class TripSimulator:
         self.progress = 0.0
         self.last_stop_seq = 0
         self.boarded = self.rng.randint(4, max(4, int(self.capacity * 0.4)))
-        self.crowd_profile = [self.rng.randint(0, self.capacity) for _ in self.stops]
+        self.crowd_profile = self._new_crowd_profile()
 
     def _step_along_path(self, dt_sec: float, speed: float):
         """Advance along the real polyline. Returns position + adjacent stops."""
@@ -381,8 +460,13 @@ class TripSimulator:
         self.boarded = max(0, self.boarded - alighting)
         self.boarded = min(self.capacity, self.boarded + self.rng.randint(1, 9))
 
-        load = self.crowd_profile[idx] + self.rng.randint(-4, 4)
-        load = max(0, min(self.capacity, load))
+        # The stored profile is this bus's OFF-PEAK occupancy. Scaling it to the
+        # current hour is what makes 08:00-10:00 and 17:00-19:00 visibly busier,
+        # rather than the whole network sitting at one flat load all day.
+        # peak_load_for clamps too, so a bus that was already near capacity stays
+        # at capacity at peak instead of reporting 130% full.
+        load = peak_load_for(self.crowd_profile[idx], self.capacity, tick_pos["ts"])
+        load = max(0, min(self.capacity, load + self.rng.randint(-4, 4)))
 
         return {
             "trip_id": self.trip_id,
@@ -580,6 +664,9 @@ def run(args) -> None:
                                 speed_kmph=pos["speed_kmph"],
                                 heading=pos["heading"],
                                 seq_progress=pos["seq_progress"],
+                                current_stop_id=pos["current_stop_id"],
+                                next_stop_id=pos["next_stop_id"],
+                                delay_sec=pos["delay_sec"],
                                 ts=pos["ts"],
                             )
                         )

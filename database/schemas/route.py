@@ -8,6 +8,8 @@ Field names follow tests_docs/api_contract.yaml: `lat`/`lon`, not
 
 from pydantic import BaseModel
 
+from database.schemas.bus import BusPosition
+
 
 class Stop(BaseModel):
     id: int
@@ -68,3 +70,24 @@ class RouteShape(BaseModel):
     total_m: float
     point_count: int
     points: list[ShapePoint]
+
+
+class RouteLive(BaseModel):
+    """Everything the map needs to draw ONE route, in one response.
+
+    The frontend previously issued three requests per selection (stops, shape,
+    and a fleet-wide /api/buses/active that it then had to filter client-side).
+    That is how the map ended up drawing three routes at once. One response
+    that is already scoped to a single route_id makes mixing routes impossible
+    rather than merely unlikely.
+
+    `buses` is scoped to this route and is [] when the route has no active
+    trip. That is a valid answer, not an error, so the client can distinguish
+    "no service running right now" from "the fetch failed".
+    """
+
+    route: Route
+    stops: list[RouteStop]
+    shape: RouteShape
+    buses: list[BusPosition]
+    generated_at: str

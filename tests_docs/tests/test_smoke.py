@@ -257,6 +257,111 @@ class TestTracking:
         assert {"bus_id", "lat", "lon", "ts"} <= payload[0].keys()
 
 
+# ===========================================================================
+# Route scoping - the live map must draw ONE route, never the whole network
+# ===========================================================================
+
+class TestRouteScoping:
+    """The bug: selecting a route still drew every route's buses.
+
+    The map consumed a fleet-wide /api/buses/active and only ever applied the
+    selection as a paint filter, so highlighting the chosen route never removed
+    the others. These tests pin the scope to the data itself - on the endpoint,
+    on the WebSocket, and in the legacy endpoint's optional filter - so that
+    cannot come back.
+    """
+
+    def test_route_live_returns_only_that_route(self, client):
+        r = client.get("/api/routes/1/live")
+        assert r.status_code == 200, r.text
+        body = r.json()
+
+        assert body["route"]["id"] == 1
+        assert body["buses"], "route 1 has an active trip in the seed"
+        for bus in body["buses"]:
+            assert bus["route_id"] == 1, f"route 1 payload leaked bus on {bus['route_code']}"
+
+    def test_route_live_stops_and_shape_agree_with_the_singular_endpoints(self, client):
+        """The bundled payload must not drift from the endpoints it replaces."""
+        live = client.get("/api/routes/1/live").json()
+        stops = client.get("/api/routes/1/stops").json()
+        shape = client.get("/api/routes/1/shape").json()
+
+        assert [s["stop"]["code"] for s in live["stops"]] == [s["stop"]["code"] for s in stops]
+        assert live["shape"]["point_count"] == shape["point_count"]
+        assert live["shape"]["route_id"] == shape["route_id"]
+
+    def test_two_routes_return_disjoint_bus_sets(self, client):
+        """If both routes report the same buses, the scope is not applied."""
+        first = client.get("/api/routes/1/live").json()["buses"]
+        second = client.get("/api/routes/2/live").json()["buses"]
+
+        assert {b["route_id"] for b in first} == {1}
+        assert {b["route_id"] for b in second} == {2}
+        assert not ({b["bus_id"] for b in first} & {b["bus_id"] for b in second})
+
+    def test_route_with_no_active_trip_is_an_empty_list_not_an_error(self, client, seeded_db):
+        """Edge case: a valid route with no service must be a 200 with buses: [].
+
+        The seed runs a trip on every route, so one has to be retired to reach
+        this state. An empty list is a real answer; a 404 or a 500 would make
+        the map show a broken feed for a route that simply has nothing running.
+        """
+        from simulation_ml.db import models as m
+
+        Session = m.get_sessionmaker(seeded_db)
+        with Session() as s:
+            trip = s.query(m.Trip).filter(m.Trip.status == "active").first()
+            trip.status = "completed"
+            route_id = trip.route_id
+            s.commit()
+
+        r = client.get(f"/api/routes/{route_id}/live")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["buses"] == []
+        # The route itself still resolves - only its service is gone.
+        assert body["route"]["id"] == route_id
+        assert body["stops"], "stops are static reference data and must still load"
+
+    def test_route_live_404_uses_the_error_contract(self, client):
+        r = client.get("/api/routes/99999/live")
+        assert r.status_code == 404
+        body = r.json()
+        assert body["code"] == "route_not_found"
+        assert body["detail"]
+
+    def test_buses_active_is_still_fleet_wide_without_the_filter(self, client):
+        """Omitting route_id must not change the existing contract behaviour."""
+        fleet = client.get("/api/buses/active").json()
+        scoped = client.get("/api/buses/active?route_id=1").json()
+
+        assert len(scoped) < len(fleet), "the filter must actually narrow"
+        assert {b["route_id"] for b in scoped} == {1}
+
+    def test_websocket_honours_the_route_scope(self, client):
+        with client.websocket_connect("/api/ws/buses?route_id=2") as ws:
+            payload = ws.receive_json()
+
+        assert payload, "route 2 has an active trip in the seed"
+        assert {b["route_id"] for b in payload} == {2}
+
+    def test_websocket_without_a_scope_stays_fleet_wide(self, client):
+        """An unscoped socket must keep working - the fleet panels rely on it."""
+        with client.websocket_connect("/api/ws/buses") as ws:
+            payload = ws.receive_json()
+
+        assert {b["route_id"] for b in payload} == {1, 2, 3}
+
+    def test_malformed_route_scope_is_ignored_rather_than_fatal(self, client):
+        """A junk scope must not drop the socket and leave the client blind."""
+        with client.websocket_connect("/api/ws/buses?route_id=abc") as ws:
+            payload = ws.receive_json()
+
+        assert isinstance(payload, list)
+        assert len(payload) == 3, "a bad scope falls back to the fleet, not to nothing"
+
+
 class TestErrorShape:
     """conventions.error_shape: { "detail": ..., "code": ... }.
 

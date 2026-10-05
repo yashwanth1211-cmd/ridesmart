@@ -95,6 +95,33 @@ paths:
         "404":
           description: Route not found
 
+  /api/routes/{route_id}/live:
+    get:
+      tags: [routes]
+      summary: One route's stops, geometry and live buses in a single response
+      description: >
+        Everything the live map needs to draw exactly ONE route. The map is
+        scoped to the selected route, and returning that route's buses here -
+        rather than a fleet-wide list the client has to filter - is what
+        guarantees the map cannot draw another route's vehicles.
+
+        A route with no active trip returns `buses: []` with a 200. That is a
+        real answer, not a failure, so the client can tell "no service running"
+        apart from "the request failed".
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Route-scoped map payload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RouteLive" }
+        "404":
+          description: Route not found
+
   /api/stops:
     get:
       tags: [routes]
@@ -115,6 +142,15 @@ paths:
       description: >
         Returns one entry per active trip. Frontend polls this every 2 seconds
         as a fallback if the WebSocket is unavailable.
+
+        `route_id` is optional. Omitting it returns the whole fleet, which is
+        what the fleet-wide panels use. Passing it narrows the response to one
+        route, which is what the live map's polling fallback uses.
+      parameters:
+        - name: route_id
+          in: query
+          required: false
+          schema: { type: integer }
       responses:
         "200":
           description: Active buses
@@ -165,6 +201,115 @@ paths:
               schema: { $ref: "#/components/schemas/PlanResponse" }
         "400":
           description: Unknown stop code, or no route connects the two stops
+
+  /api/journey:
+    get:
+      tags: [planning]
+      summary: Direction-aware journey search - the BUSES you can actually catch
+      description: >
+        THE VEHICLE-LEVEL PLANNER, and the one the UI uses. Returns individual
+        BUSES that serve both stops in the correct direction, not candidate routes.
+
+
+        WHY THIS EXISTS ALONGSIDE /api/routes/plan
+        -------------------------------------------
+        The two endpoints answer different questions and only one of them is what
+        someone standing at a stop needs:
+
+          /api/routes/plan  "what are my trade-offs?" A route list. Compare one
+                            corridor against another.
+          /api/journey      "which bus do I physically catch?" A vehicle list. A
+                            route list cannot answer this: it has no bus number, no
+                            crowd reading for one vehicle, and it cannot tell a bus
+                            two minutes away from one that left ten minutes ago.
+
+        /api/routes/plan is kept because comparing corridors is a real product
+        feature. It is just not the same question.
+
+
+        DIRECTION IS ENFORCED PER BUS, NOT PER ROUTE
+        ----------------------------------------------
+        A route runs one way. An option is returned only when seq(from) < seq(to)
+        in THAT vehicle's direction, so asking for Katpadi to VIT on a corridor
+        that only runs VIT to Katpadi returns nothing rather than a bus going the
+        wrong way.
+
+
+        TWO ARRIVAL TIMES, DELIBERATELY
+        --------------------------------
+          arrives_in_min  until the bus reaches the BOARDING stop. What the
+                          passenger is waiting on, and what ranking sorts by.
+          eta_min         until it reaches the DESTINATION. What "arriving in N
+                          minutes" means to someone choosing between buses.
+
+        These are different numbers and collapsing them produced a card reading
+        "arriving in 0 min" for a bus sitting AT the boarding stop while it was
+        an hour from the destination.
+
+
+        NO RESULTS IS A 200
+        -------------------
+        "Nothing connects these" is an answer, not a failure, so it returns 200
+        with `message` set and both lists empty. The message distinguishes the
+        cases that need different words on screen - same stop, wrong direction, or
+        a transfer available - because suggesting a swap helps in one case and is
+        nonsense in another. Only an unknown stop id is an error.
+      parameters:
+        - name: from_stop_id
+          in: query
+          required: true
+          schema: { type: integer }
+          description: Boarding stop id
+          example: 4
+        - name: to_stop_id
+          in: query
+          required: true
+          schema: { type: integer }
+          description: Destination stop id
+          example: 9
+        - name: sort
+          in: query
+          required: false
+          schema: { type: string, enum: [eta, crowd], default: eta }
+          description: >
+            eta   arrival time ascending.
+            crowd arrival time plus a crowding penalty
+                  (low 0, medium 10, high 25 min), lower score first. This is the
+                  answer to "I would rather wait than travel packed" and it has to
+                  be a visible control rather than a hidden term.
+        - name: accessibility_only
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: Drop buses with no wheelchair access
+        - name: include_transfers
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+          description: >
+            Include one-transfer suggestions when no direct bus exists. They are
+            NOT offered alongside a direct option - suggesting a change to someone
+            who can take one bus is noise.
+        - name: horizon_min
+          in: query
+          required: false
+          schema: { type: integer, default: 120, minimum: 10, maximum: 360 }
+          description: How far ahead to consider departures
+      responses:
+        "200":
+          description: >
+            Matching buses, ranked. Both lists may be empty, in which case
+            `message` explains why.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JourneyResponse" }
+        "404":
+          description: Unknown stop id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Missing or malformed query parameters
 
   /api/trips/{trip_id}/eta:
     get:
@@ -288,6 +433,24 @@ components:
           type: array
           items: { $ref: "#/components/schemas/ShapePoint" }
 
+    RouteLive:
+      type: object
+      description: >
+        One route's map payload. `buses` is scoped to `route.id`; a route with
+        no active trip returns an empty list rather than an error.
+      required: [route, stops, shape, buses, generated_at]
+      properties:
+        route: { $ref: "#/components/schemas/Route" }
+        stops:
+          type: array
+          items: { $ref: "#/components/schemas/RouteStop" }
+        shape: { $ref: "#/components/schemas/RouteShape" }
+        buses:
+          type: array
+          description: Active buses on this route only. Empty if none are running.
+          items: { $ref: "#/components/schemas/BusPosition" }
+        generated_at: { type: string, format: date-time }
+
     RouteStop:
       type: object
       required: [seq, stop]
@@ -401,6 +564,228 @@ components:
         name: { type: string, example: College }
         eta_min: { type: integer, example: 0 }
         accessible: { type: boolean, example: true }
+
+    JourneyResponse:
+      type: object
+      required: [from, to, sort, direct, transfers]
+      properties:
+        from: { $ref: "#/components/schemas/Stop" }
+        to: { $ref: "#/components/schemas/Stop" }
+        sort:
+          type: string
+          enum: [eta, crowd]
+          description: The ranking actually applied, echoed back
+        generated_at: { type: string, format: date-time }
+        direct:
+          type: array
+          description: >
+            Buses that serve both stops in the correct direction. Every entry must
+            be rendered - the ranking is a suggestion, not a decision made for the
+            passenger. Capped at 24; a corridor with a four-minute headway would
+            otherwise bury the useful rows.
+          items: { $ref: "#/components/schemas/JourneyOption" }
+        transfers:
+          type: array
+          description: One-transfer suggestions. Empty when a direct bus exists.
+          items: { $ref: "#/components/schemas/JourneyWithTransfer" }
+        message:
+          type: string
+          nullable: true
+          description: >
+            Why the direct list is empty, or null when it is not. Wording is
+            meaningful and must be passed through rather than replaced: the same
+            empty list needs "try swapping" for a wrong-direction pair and "you
+            need a change of bus" when a transfer is offered.
+          example: No direct bus runs that way. Try swapping the two stops.
+
+    JourneyOption:
+      type: object
+      description: >
+        ONE BUS that can take the passenger from `from` to `to`. Distinguished
+        from PlanOption, which is a ROUTE, in three ways that matter:
+
+          1. `option_id` identifies the VEHICLE (its trip), so two buses on one
+             corridor are two options rather than one duplicated row.
+          2. It carries a registration and a direction.
+          3. `kind` distinguishes a bus being tracked now from a timetable
+             departure that has no vehicle behind it yet. A scheduled entry has
+             null delay and null crowding - reporting "on time" or "empty" for a
+             bus that has not departed invents the readings the passenger is most
+             likely to act on.
+      required:
+        [option_id, route_id, route_code, kind, direction, arrives_in_min,
+         eta_min, journey_min, stops]
+      properties:
+        option_id:
+          type: string
+          description: >
+            Stable id for this option. For a scheduled departure it embeds the
+            departure timestamp, so two departures on one route cannot collide.
+          example: "live:1842"
+        kind: { type: string, enum: [live, scheduled] }
+        route_id: { type: integer, example: 12 }
+        route_code:
+          type: string
+          description: Directional route code, unique per direction
+          example: "21A UP"
+        route_number:
+          type: string
+          description: >
+            The passenger-facing route number, shared by both directions. The code
+            alone does not say which way the bus runs, which is why both are sent.
+          example: "21A"
+        route_name: { type: string, example: Vellore New Bus Stand - Katpadi }
+        direction:
+          type: string
+          enum: [up, down]
+          description: Load-bearing - it is what makes seq(from) < seq(to) meaningful
+        bus_id:
+          type: integer
+          nullable: true
+          description: null for a scheduled departure
+        bus_reg:
+          type: string
+          nullable: true
+          description: Vehicle registration, e.g. TN09AB1234. null when scheduled.
+        bus_type: { type: string, enum: [ordinary, express, deluxe] }
+        arrives_in_min:
+          type: integer
+          description: >
+            Minutes until the bus reaches the BOARDING stop. What the passenger is
+            waiting on, and what the ranking sorts by.
+          example: 4
+        eta_min:
+          type: integer
+          description: >
+            Minutes until the bus reaches the DESTINATION. This is the headline
+            figure, and it is NOT the same number as arrives_in_min.
+          example: 34
+        journey_min:
+          type: integer
+          description: >
+            Ride time from the timetable slice, boarding stop to destination.
+            Independent of where the bus currently is.
+          example: 30
+        scheduled_arrival:
+          type: string
+          format: date-time
+          nullable: true
+          description: Per the timetable, in UTC
+        predicted_arrival:
+          type: string
+          format: date-time
+          nullable: true
+          description: Scheduled arrival adjusted for observed delay
+        delay_min:
+          type: integer
+          nullable: true
+          description: >
+            Observed minus scheduled, in minutes. Negative means running early.
+            null when there is no vehicle to be late.
+        departs_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set for kind=scheduled only
+        crowd_level:
+          type: string
+          enum: [low, med, high]
+          nullable: true
+          description: >
+            Recomputed per request from the current load, not read from the stored
+            Crowd row. That row is written at seed time from an off-peak profile
+            and never rescaled, so trusting it let a full bus report "low" - the
+            one mistake the crowd sort exists to prevent.
+        crowd_load: { type: integer, nullable: true, example: 18 }
+        capacity: { type: integer, example: 52 }
+        crowd_ratio: { type: number, nullable: true, example: 0.346 }
+        wheelchair_accessible: { type: boolean, example: true }
+        low_floor: { type: boolean, example: true }
+        score:
+          type: number
+          description: >
+            Ranking score, lower is better.
+            sort=eta   score = arrives_in_min
+            sort=crowd score = eta_min + penalty(crowd_level),
+                      where penalty is low 0, medium 10, high 25.
+          example: 27.0
+        stops:
+          type: array
+          description: >
+            The stops between the two endpoints, inclusive of both, in travel
+            order for this direction. Per-stop etas are measured from NOW at the
+            boarding point, not from the route's first stop - otherwise the first
+            entry reads as an hour away for a bus already at the kerb.
+          items: { $ref: "#/components/schemas/JourneyStop" }
+
+    JourneyStop:
+      type: object
+      required: [stop_id, name, eta_min]
+      properties:
+        stop_id: { type: integer, example: 4 }
+        stop_code: { type: string, example: STOP_VIT }
+        name: { type: string, example: VIT }
+        seq:
+          type: integer
+          description: Sequence on THIS route, so order survives a reversal
+          example: 3
+        eta_min: { type: integer, example: 4 }
+        accessible: { type: boolean, example: true }
+
+    JourneyWithTransfer:
+      type: object
+      description: >
+        A journey with one change of bus. Offered ONLY when no direct bus exists,
+        and capped at a 40-minute wait so a "connection" is not really a wait for
+        something else entirely.
+
+        Note for the UI: these are not selectable. The map is scoped to exactly
+        one route - that invariant is what stops a bus from an unselected route
+        being drawn on it - and a transfer spans two. Showing one leg while
+        implying both would be a lie; breaking the scoping would break the map.
+      required: [legs, total_min, wait_min, transfers]
+      properties:
+        transfers: { type: integer, example: 1 }
+        transfer_stop:
+          $ref: "#/components/schemas/Stop"
+        wait_min:
+          type: integer
+          description: Time between the first leg arriving and the second leaving
+          example: 6
+        total_min:
+          type: integer
+          description: >
+            Boarding stop to destination, including the wait and an 8-minute
+            interchange penalty.
+          example: 88
+        legs:
+          type: array
+          minItems: 2
+          description: >
+            Two entries, each travelling in its own correct direction - a transfer
+            that needs a bus to reverse at the hub is not offered.
+          items: { $ref: "#/components/schemas/JourneyLeg" }
+
+    JourneyLeg:
+      type: object
+      required: [route_id, route_code, direction, arrives_in_min, stops]
+      properties:
+        route_id: { type: integer, example: 21 }
+        route_code: { type: string, example: "301 UP" }
+        route_number: { type: string, example: "301" }
+        route_name: { type: string, example: Arakkonam - Vellore }
+        direction: { type: string, enum: [up, down] }
+        bus_id: { type: integer, nullable: true }
+        bus_reg: { type: string, nullable: true, example: TN09AB1060 }
+        bus_type: { type: string, enum: [ordinary, express, deluxe] }
+        arrives_in_min: { type: integer, example: 4 }
+        crowd_level: { type: string, enum: [low, med, high], nullable: true }
+        crowd_load: { type: integer, nullable: true, example: 30 }
+        capacity: { type: integer, example: 50 }
+        wheelchair_accessible: { type: boolean }
+        stops:
+          type: array
+          items: { $ref: "#/components/schemas/JourneyStop" }
 
     StopEta:
       type: object

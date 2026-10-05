@@ -1,4 +1,4 @@
-"""Seed the database with demo routes, stops, buses and trips.
+﻿"""Seed the database with demo routes, stops, buses and trips.
 
 OWNER: Member 5 (temporarily, while Member 4 is unavailable).
 
@@ -222,7 +222,25 @@ INITIAL_PROGRESS = {
 }
 
 
-def seed(reset: bool = False, url: str | None = None) -> None:
+def seed(reset: bool = False, url: str | None = None, include_network: bool = False) -> None:
+    """Create tables and seed the demo network.
+
+    include_network adds the synthetic Vellore - Katpadi network from
+    simulation_ml/seed/network_data.py: 29 route numbers in both directions, a
+    96-vehicle fleet, through-the-day timetables and live trips for each bus.
+
+    That is 100 buses with the three demo routes, the top of the brief's 60-100
+    band. Busy city corridors get 4 buses and sparse ones 3, deliberately: with
+    one bus per route a given origin sees a single candidate and the "least
+    crowded" ranking has nothing to reorder, so the feature would be present in
+    the API and absent from the product.
+
+    It is OFF by default on purpose. Without it this function produces exactly
+    the three-route, 23-stop demo the test-suite asserts on, so those assertions
+    keep meaning what they say. Turn it on for the full network:
+
+        python -m simulation_ml.seed.seed --reset --network
+    """
     Session = get_sessionmaker(url)
     engine_url = url or None
 
@@ -236,165 +254,214 @@ def seed(reset: bool = False, url: str | None = None) -> None:
     create_all(engine_url)
 
     with Session() as s:
-        if s.query(Route).count() > 0:
+        has_demo = s.query(Route).count() > 0
+        # route_number is empty on the three hand-authored OSM routes and set on
+        # every synthetic one, so it is a reliable "has this run already happened"
+        # marker even when the network is being added to an existing database.
+        has_network = s.query(Route).filter(Route.route_number != "").count() > 0
+
+        if has_demo:
             print("Database already seeded - skipping. Use --reset to rebuild.")
-            return
+        else:
 
-        # ---- stops ------------------------------------------------------
-        stop_by_code: dict[str, Stop] = {}
-        for code, name, lat, lon, accessible, kind in STOPS:
-            st = Stop(code=code, name=name, lat=lat, lon=lon, accessible=accessible, kind=kind)
-            s.add(st)
-            stop_by_code[code] = st
-        s.flush()
-        print(f"  stops   {len(STOPS)}")
-
-        # ---- buses ------------------------------------------------------
-        bus_objs = [
-            Bus(reg_no=reg, capacity=cap, wheelchair=wc, low_floor=lf)
-            for reg, cap, wc, lf in BUSES
-        ]
-        for b in bus_objs:
-            s.add(b)
-        s.flush()
-        print(f"  buses   {len(bus_objs)}")
-
-        # ---- routes + route_stop + schedule offsets + segment stats -----
-        route_by_code: dict[str, Route] = {}
-        total_segments = 0
-        total_shape_points: dict[str, float] = {}
-        for spec in ROUTES:
-            rt = Route(code=spec["code"], name=spec["name"], direction=spec["direction"])
-            s.add(rt)
+            # ---- stops ------------------------------------------------------
+            stop_by_code: dict[str, Stop] = {}
+            for code, name, lat, lon, accessible, kind in STOPS:
+                st = Stop(code=code, name=name, lat=lat, lon=lon, accessible=accessible, kind=kind)
+                s.add(st)
+                stop_by_code[code] = st
             s.flush()
-            route_by_code[spec["code"]] = rt
+            print(f"  stops   {len(STOPS)}")
 
-            stops = spec["stops"]
-            factors = spec["factors"]
+            # ---- buses ------------------------------------------------------
+            bus_objs = [
+                Bus(reg_no=reg, capacity=cap, wheelchair=wc, low_floor=lf)
+                for reg, cap, wc, lf in BUSES
+            ]
+            for b in bus_objs:
+                s.add(b)
+            s.flush()
+            print(f"  buses   {len(bus_objs)}")
 
-            for seq, (stop_code, offset) in enumerate(stops):
-                s.add(
-                    RouteStop(
-                        route_id=rt.id,
-                        stop_id=stop_by_code[stop_code].id,
-                        seq=seq,
-                        scheduled_offset_sec=offset,
-                    )
+            # ---- routes + route_stop + schedule offsets + segment stats -----
+            route_by_code: dict[str, Route] = {}
+            total_segments = 0
+            total_shape_points: dict[str, float] = {}
+            for spec in ROUTES:
+                rt = Route(
+                    code=spec["code"],
+                    route_number=code,
+                    name=spec["name"],
+                    direction=spec["direction"],
                 )
+                s.add(rt)
+                s.flush()
+                route_by_code[spec["code"]] = rt
 
-            # segment stats: observed = scheduled * factor for this hop.
-            # factors[i] describes the segment LEAVING stop i.
-            for seq in range(len(stops) - 1):
-                sched_sec = stops[seq + 1][1] - stops[seq][1]
-                total_segments += 1
-                s.add(
-                    SegmentStat(
-                        route_id=rt.id,
-                        from_stop_id=stop_by_code[stops[seq][0]].id,
-                        to_stop_id=stop_by_code[stops[seq + 1][0]].id,
-                        sched_travel_sec=sched_sec,
-                        avg_travel_sec=float(sched_sec) * factors[seq],
-                        samples=140 + seq * 15,
-                        observed_at=utcnow(),
-                    )
-                )
+                stops = spec["stops"]
+                factors = spec["factors"]
 
-            # Real road geometry. cum_m is the running distance from the very
-            # first vertex of the route, so the simulator can convert a 0-1
-            # progress fraction straight into a point on the shape.
-            cum = 0.0
-            prev_lat = prev_lon = None
-            for leg_idx, leg in enumerate(spec["shape"]):
-                for seq, (lat, lon) in enumerate(leg["coords"]):
-                    if prev_lat is not None:
-                        cum += haversine_m(prev_lat, prev_lon, lat, lon)
+                # leg_distance_m is the real road length of the hop INTO this
+                # stop, taken from the OSRM leg rather than recomputed, so the
+                # planner's distance-based ETA matches the geometry the map
+                # draws. Stops[0] is the origin and has no leg into it.
+                legs = spec["shape"]
+                for seq, (stop_code, offset) in enumerate(stops):
                     s.add(
-                        RouteShapePoint(
-                            route_id=rt.id, leg=leg_idx, seq=seq,
-                            lat=lat, lon=lon, cum_m=cum,
+                        RouteStop(
+                            route_id=rt.id,
+                            stop_id=stop_by_code[stop_code].id,
+                            seq=seq,
+                            scheduled_offset_sec=offset,
+                            leg_distance_m=float(legs[seq - 1]["metres"]) if seq else 0.0,
                         )
                     )
-                    prev_lat, prev_lon = lat, lon
-            total_shape_points[spec["code"]] = int(cum)
-        s.flush()
-        print(f"  routes  {len(ROUTES)}  ({total_segments} segments with observed stats)")
-        print(f"  shape   {sum(total_shape_points.values()) / 1000:.1f} km of real road geometry")
 
-        # ---- trips ------------------------------------------------------
-        now = utcnow()
-        trip_by_route: dict[str, Trip] = {}
-        for bus_idx, route_code, seed_load in TRIPS:
-            spec = next(r for r in ROUTES if r["code"] == route_code)
-            rt = route_by_code[route_code]
-            bus = bus_objs[bus_idx]
-            progress = INITIAL_PROGRESS.get(route_code, 0.0)
+                # segment stats: observed = scheduled * factor for this hop.
+                # factors[i] describes the segment LEAVING stop i.
+                for seq in range(len(stops) - 1):
+                    sched_sec = stops[seq + 1][1] - stops[seq][1]
+                    total_segments += 1
+                    s.add(
+                        SegmentStat(
+                            route_id=rt.id,
+                            from_stop_id=stop_by_code[stops[seq][0]].id,
+                            to_stop_id=stop_by_code[stops[seq + 1][0]].id,
+                            sched_travel_sec=sched_sec,
+                            avg_travel_sec=float(sched_sec) * factors[seq],
+                            samples=140 + seq * 15,
+                            observed_at=utcnow(),
+                        )
+                    )
 
-            tr = Trip(
-                bus_id=bus.id,
-                route_id=rt.id,
-                direction=spec["direction"],
-                status="active",
-                started_at=now,
-                planned_duration_sec=spec["duration_sec"],
-            )
-            s.add(tr)
+                # Real road geometry. cum_m is the running distance from the very
+                # first vertex of the route, so the simulator can convert a 0-1
+                # progress fraction straight into a point on the shape.
+                cum = 0.0
+                prev_lat = prev_lon = None
+                for leg_idx, leg in enumerate(spec["shape"]):
+                    for seq, (lat, lon) in enumerate(leg["coords"]):
+                        if prev_lat is not None:
+                            cum += haversine_m(prev_lat, prev_lon, lat, lon)
+                        s.add(
+                            RouteShapePoint(
+                                route_id=rt.id, leg=leg_idx, seq=seq,
+                                lat=lat, lon=lon, cum_m=cum,
+                            )
+                        )
+                        prev_lat, prev_lon = lat, lon
+                total_shape_points[spec["code"]] = int(cum)
             s.flush()
-            trip_by_route[route_code] = tr
+            print(f"  routes  {len(ROUTES)}  ({total_segments} segments with observed stats)")
+            print(f"  shape   {sum(total_shape_points.values()) / 1000:.1f} km of real road geometry")
 
-            # timetable rows for the whole trip
-            for stop_code, offset in spec["stops"]:
+            # ---- trips ------------------------------------------------------
+            now = utcnow()
+            trip_by_route: dict[str, Trip] = {}
+            for bus_idx, route_code, seed_load in TRIPS:
+                spec = next(r for r in ROUTES if r["code"] == route_code)
+                rt = route_by_code[route_code]
+                bus = bus_objs[bus_idx]
+                progress = INITIAL_PROGRESS.get(route_code, 0.0)
+
+                tr = Trip(
+                    bus_id=bus.id,
+                    route_id=rt.id,
+                    direction=spec["direction"],
+                    status="active",
+                    started_at=now,
+                    planned_duration_sec=spec["duration_sec"],
+                )
+                s.add(tr)
+                s.flush()
+                trip_by_route[route_code] = tr
+
+                # timetable rows for the whole trip
+                for stop_code, offset in spec["stops"]:
+                    s.add(
+                        Schedule(
+                            trip_id=tr.id,
+                            stop_id=stop_by_code[stop_code].id,
+                            scheduled_offset_sec=offset,
+                            scheduled_arrival=None,
+                        )
+                    )
+
+                # Seed a crowd row at the stop the bus is just leaving. This is the
+                # number the API surfaces, so it must match the trip's story.
+                route_stop_list = sorted(
+                    [rs for rs in rt.route_stops], key=lambda r: r.seq
+                )
+                current_seq = min(int(progress * len(route_stop_list)), len(route_stop_list) - 1)
+                here = route_stop_list[current_seq]
+
                 s.add(
-                    Schedule(
+                    Crowd(
                         trip_id=tr.id,
-                        stop_id=stop_by_code[stop_code].id,
-                        scheduled_offset_sec=offset,
-                        scheduled_arrival=None,
+                        stop_id=here.stop_id,
+                        load=seed_load,
+                        capacity=bus.capacity,
+                        level=crowd_level_for(seed_load, bus.capacity),
+                        ts=now,
                     )
                 )
 
-            # Seed a crowd row at the stop the bus is just leaving. This is the
-            # number the API surfaces, so it must match the trip's story.
-            route_stop_list = sorted(
-                [rs for rs in rt.route_stops], key=lambda r: r.seq
-            )
-            current_seq = min(int(progress * len(route_stop_list)), len(route_stop_list) - 1)
-            here = route_stop_list[current_seq]
+                # One telemetry tick so /api/buses/active is non-empty immediately,
+                # before the simulator is ever started.
+                stops_ordered = route_stop_list
+                frac = progress * (len(stops_ordered) - 1)
+                i = min(int(frac), len(stops_ordered) - 2)
+                t = frac - i
+                a, b = stops_ordered[i].stop, stops_ordered[i + 1].stop
+                from simulation_ml.db.models import Location
 
-            s.add(
-                Crowd(
-                    trip_id=tr.id,
-                    stop_id=here.stop_id,
-                    load=seed_load,
-                    capacity=bus.capacity,
-                    level=crowd_level_for(seed_load, bus.capacity),
-                    ts=now,
+                s.add(
+                    Location(
+                        bus_id=bus.id,
+                        trip_id=tr.id,
+                        lat=a.lat + (b.lat - a.lat) * t,
+                        lon=a.lon + (b.lon - a.lon) * t,
+                        speed_kmph=24.0,
+                        heading=0.0,
+                        seq_progress=progress,
+                        current_stop_id=stops_ordered[i].stop_id,
+                        next_stop_id=stops_ordered[i + 1].stop_id,
+                        # A little behind the timetable, matching the
+                        # ROUTE_FACTORS the segment stats are seeded with. Real
+                        # observed times replace this within one tick once the
+                        # simulator runs.
+                        delay_sec=float(int(progress * spec["duration_sec"] * 0.08)),
+                        ts=now,
+                    )
                 )
+
+            s.commit()
+            print(f"  trips   {len(TRIPS)} (all active, with timetable + crowd + first tick)")
+
+    # ---- the synthetic network, after the OSM stops exist ----------------
+    # Ordering matters: network_data reuses stop codes from data/real_routes.json
+    # so the two networks share one connected graph rather than putting two pins
+    # on Katpadi Junction. Those stops have to be in the table first.
+    if include_network and not has_network:
+        from simulation_ml.seed.seed_network import seed_network
+
+        with Session() as s:
+            print("\nSeeding the synthetic Vellore - Katpadi network ...")
+            summary = seed_network(s)
+            s.commit()
+            print(
+                f"  stops   +{summary['stops_created']} new "
+                f"({summary['stops']} synthetic, {summary['reused_stops']} reused from OSM)"
             )
-
-            # One telemetry tick so /api/buses/active is non-empty immediately,
-            # before the simulator is ever started.
-            stops_ordered = route_stop_list
-            frac = progress * (len(stops_ordered) - 1)
-            i = min(int(frac), len(stops_ordered) - 2)
-            t = frac - i
-            a, b = stops_ordered[i].stop, stops_ordered[i + 1].stop
-            from simulation_ml.db.models import Location
-
-            s.add(
-                Location(
-                    bus_id=bus.id,
-                    trip_id=tr.id,
-                    lat=a.lat + (b.lat - a.lat) * t,
-                    lon=a.lon + (b.lon - a.lon) * t,
-                    speed_kmph=24.0,
-                    heading=0.0,
-                    seq_progress=progress,
-                    ts=now,
-                )
+            print(
+                f"  routes  +{summary['routes_written']} "
+                f"({summary['route_numbers']} numbers x 2 directions)"
             )
-
-        s.commit()
-        print(f"  trips   {len(TRIPS)} (all active, with timetable + crowd + first tick)")
+            print(f"  buses   +{summary['buses']} ({summary['accessible_buses']} wheelchair accessible)")
+            print(f"  trips   +{summary['active_trips']} active, with timetable + crowd + first tick")
+            print(f"  shape   {summary['shape_points']} approximate vertices, {summary['segments']} segments")
+            print("  NOTE    synthetic data. Stop names and coordinates are real places;")
+            print("          route numbers, fleet and headways are invented, not TNSTC data.")
 
     print("\nSeed complete.")
     print("\n  Real Vellore - Katpadi data:")
@@ -414,12 +481,29 @@ def seed(reset: bool = False, url: str | None = None) -> None:
     print(f"\n  Plan {demo_from} -> {demo_to} and you get three options.")
     print("  Next: python -m simulation_ml.simulate --speed 5 --interval 2")
 
+    if include_network:
+        # The hint above describes POST /api/routes/plan, which is the
+        # route-level planner and still the right answer for "compare these
+        # corridors". The app itself plans with GET /api/journey, which returns
+        # BUSES. Leaving only the older hint would point at an endpoint nothing
+        # in the UI calls, so both are named - and the difference between them is
+        # the whole point of having two.
+        print("\n  Two planners, different questions:")
+        print("    GET  /api/journey?from_stop_id=4&to_stop_id=8   the BUSES you can catch")
+        print("    POST /api/routes/plan  {from,to}               the ROUTES to weigh up")
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Seed the RideSmart demo database")
     ap.add_argument(
         "--reset", action="store_true", help="drop all tables before seeding"
     )
+    ap.add_argument(
+        "--network",
+        action="store_true",
+        help="also seed the synthetic Vellore - Katpadi network "
+             "(29 route numbers in both directions, 91 buses, timetables, live trips)",
+    )
     ap.add_argument("--url", default=None, help="override DATABASE_URL")
     args = ap.parse_args()
-    seed(reset=args.reset, url=args.url)
+    seed(reset=args.reset, url=args.url, include_network=args.network)

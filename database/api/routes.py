@@ -10,14 +10,17 @@ from sqlalchemy.orm import Session
 
 from database.core.database import get_db
 from database.core.errors import ApiError
+from datetime import datetime, timezone
+
 from database.schemas.route import (
     Route,
+    RouteLive,
     RouteShape,
     RouteStop,
     RouteWithStops,
     Stop,
 )
-from database.services.tracking import all_stops
+from database.services.tracking import active_positions, all_stops
 from simulation_ml.db.models import Route as RouteModel
 
 router = APIRouter(prefix="/routes", tags=["Routes"])
@@ -67,6 +70,38 @@ def get_route_shape(route_id: int, db: Session = Depends(get_db)):
         "total_m": round(pts[-1].cum_m, 1) if pts else 0.0,
         "point_count": len(pts),
         "points": [{"seq": p.seq, "lat": p.lat, "lon": p.lon, "cum_m": p.cum_m} for p in pts],
+    }
+
+
+@router.get("/{route_id}/live", response_model=RouteLive)
+def get_route_live(route_id: int, db: Session = Depends(get_db)):
+    """One route's stops, road geometry and live buses, in a single response.
+
+    This is the endpoint the live map should poll. The map is scoped to the
+    route the passenger selected, so returning that route's buses here - rather
+    than a fleet-wide list the client must filter - is what guarantees the map
+    can never render another route's vehicles.
+
+    A route with no active trip returns `buses: []` with a 200. That is a real
+    answer, not a failure, and the frontend distinguishes it from an error.
+    """
+    route = db.get(RouteModel, route_id)
+    if route is None:
+        raise ApiError(status_code=404, detail=f"Route {route_id} not found", code="route_not_found")
+
+    pts = sorted(route.shape_points, key=lambda p: (p.leg, p.seq))
+    return {
+        "route": route.as_dict(),
+        "stops": [rs.as_dict() for rs in route.ordered_stops()],
+        "shape": {
+            "route_id": route.id,
+            "code": route.code,
+            "total_m": round(pts[-1].cum_m, 1) if pts else 0.0,
+            "point_count": len(pts),
+            "points": [{"seq": p.seq, "lat": p.lat, "lon": p.lon, "cum_m": p.cum_m} for p in pts],
+        },
+        "buses": active_positions(db, route_id=route_id),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

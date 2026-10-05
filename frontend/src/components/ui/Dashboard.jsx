@@ -130,8 +130,79 @@ function EtaCard({ journey, buses }) {
   )
 }
 
-function MapView({ buses, journey, routeStops, routeShape, transport, error, query }) {
-  const { plan, selected, source } = journey
+/**
+ * Which route the map is showing.
+ *
+ * The map is scoped to exactly one route, so this is the control that changes
+ * what is on it. It reads and writes the SAME journey selection the planner's
+ * option cards use rather than holding its own copy - two independent pieces of
+ * selection state is how the map and the planner end up disagreeing about which
+ * route is on screen.
+ */
+function RouteSelector({ options, selected, onSelect, onClear }) {
+  /*
+    Chips are per ROUTE, the planner's cards are per BUS.
+
+    Options used to be routes, so one chip per option was exact. Now a single
+    corridor can contribute four buses and the chip row would show "21A" four
+    times, four selectable buttons all pointing at the same polyline - noise that
+    hides the thing the control is for, which is choosing which corridor to look
+    at. Collapsing to the best-ranked bus on each route keeps one chip per
+    corridor while still letting the passenger drop to the exact vehicle through
+    the planner card.
+  */
+  const routes = useMemo(() => {
+    const seen = new Map()
+    for (const option of options) {
+      if (!seen.has(option.routeId)) seen.set(option.routeId, option)
+    }
+    return [...seen.values()]
+  }, [options])
+
+  return (
+    <div className="absolute top-3 right-3 z-10 flex max-w-[60%] flex-wrap items-center justify-end gap-1.5">
+      {routes.map((option) => {
+        const isSelected = option.routeId === selected?.routeId
+        const count = options.filter((o) => o.routeId === option.routeId).length
+        return (
+          <button
+            key={option.routeId}
+            type="button"
+            onClick={() => onSelect(option.id)}
+            aria-pressed={isSelected}
+            title={
+              count > 1
+                ? `${option.code} — ${count} buses. Shows the soonest.`
+                : (option.name ?? option.code)
+            }
+            className={`glass-panel-strong rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+              isSelected
+                ? 'bg-amber-400/25 text-amber-200 ring-1 ring-amber-400/60'
+                : 'text-white/80 hover:bg-white/15'
+            }`}
+          >
+            {option.code}
+            {count > 1 && <span className="ml-1 text-[10px] text-gray-400">×{count}</span>}
+          </button>
+        )
+      })}
+
+      {selected && (
+        <button
+          type="button"
+          onClick={onClear}
+          title="Clear the selected route"
+          className="glass-panel-strong rounded-md px-2 py-1 text-[11px] font-medium text-white/70 transition-colors hover:bg-white/15"
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  )
+}
+
+function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, transport, error, query }) {
+  const { plan, options, selected, selectOption, clearSelection, source } = journey
   const [focusedBusId, setFocusedBusId] = useState(null)
 
   const focused = buses.find((b) => b.busId === focusedBusId) ?? null
@@ -156,12 +227,19 @@ function MapView({ buses, journey, routeStops, routeShape, transport, error, que
           routeShape={routeShape}
           origin={plan.origin}
           destination={plan.destination}
+          selectedRouteId={selectedRouteId}
           selectedRouteCode={selected?.code ?? null}
           onSelectBus={setFocusedBusId}
           className="h-full min-h-[320px] rounded-lg"
         />
         <RouteChips origin={plan.origin} destination={plan.destination} />
         <EtaCard journey={journey} buses={buses} />
+        <RouteSelector
+          options={options}
+          selected={selected}
+          onSelect={selectOption}
+          onClear={clearSelection}
+        />
       </div>
 
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto scroll-slim">
@@ -173,10 +251,18 @@ function MapView({ buses, journey, routeStops, routeShape, transport, error, que
 
           {visible.length === 0 ? (
             <p className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-[12px] text-gray-400">
-              {buses.length === 0
-                ? 'No buses reporting. Start the simulator:'
-                : 'No buses match your search.'}
-              {buses.length === 0 && (
+              {/*
+                Three different empty states, and conflating them is how a dead
+                feed ends up looking like a filter that matched nothing. No
+                selection is not an outage, and a route with no service is not
+                an outage either.
+              */}
+              {selectedRouteId == null
+                ? 'No route selected. Pick one to show it on the map.'
+                : buses.length === 0
+                  ? `No buses running on ${selected?.code ?? 'this route'} right now.`
+                  : 'No buses match your search.'}
+              {selectedRouteId != null && buses.length === 0 && error == null && (
                 <code className="mt-1 block text-[11px] text-gray-500">
                   python -m simulation_ml.simulate --speed 5 --interval 2
                 </code>
@@ -268,15 +354,20 @@ function MapView({ buses, journey, routeStops, routeShape, transport, error, que
   )
 }
 
-function MetricsBar({ buses, transport }) {
+function MetricsBar({ buses, transport, routeCode }) {
   const total = buses.length
   const moving = buses.filter((b) => (b.speedKmph ?? 0) > 0).length
   const delayed = buses.filter((b) => (b.delayMin ?? 0) > 0).length
   const avgSpeed =
     total > 0 ? Math.round(buses.reduce((sum, b) => sum + (b.speedKmph ?? 0), 0) / total) : 0
 
+  // These counts are scoped to the selected route, so the strip says which one.
+  // Labelling a single route's numbers as fleet totals would be a number the
+  // data does not support.
+  const scope = routeCode ? `on ${routeCode}` : 'no route'
+
   const items = [
-    ['In service', total],
+    ['In service', `${total} ${scope}`],
     ['Moving', moving],
     ['Avg speed', `${avgSpeed} km/h`],
     ['Delayed', delayed],
@@ -305,19 +396,58 @@ export default function Dashboard() {
   const [from, setFrom] = useState(DEFAULT_JOURNEY.from)
   const [to, setTo] = useState(DEFAULT_JOURNEY.to)
   const [accessibilityOnly, setAccessibilityOnly] = useState(false)
+  const [sort, setSort] = useState('eta')
 
   const { stops } = useStops()
-  const journey = useJourney({ from, to, accessibilityOnly })
-  const { buses, transport, error: busError } = useLiveBuses()
 
-  const routeStops = useRouteStops(journey.selected?.routeId, {
+  /*
+    The pickers hold stop CODES because that is what is readable and stable
+    across a re-seed; GET /api/journey takes stop IDS.
+
+    The translation is deliberately a plain lookup rather than an index lookup
+    against a hard-coded id. A re-seed renumbers ids, and a constant would
+    silently point at a different place - the kind of bug that looks like a data
+    error and is actually a stale constant. `null` until the stop list lands,
+    which useJourney treats as "not ready to ask yet" instead of firing a
+    request the backend would reject as an unknown stop.
+  */
+  const stopIds = useMemo(() => {
+    const byCode = new Map(stops.map((s) => [s.code, s.id]))
+    return { from: byCode.get(from) ?? null, to: byCode.get(to) ?? null }
+  }, [stops, from, to])
+
+  const journey = useJourney({
+    from,
+    to,
+    fromStopId: stopIds.from,
+    toStopId: stopIds.to,
+    accessibilityOnly,
+    sort,
+  })
+
+  /*
+    The one selected route, or null when nothing is selected.
+
+    Every map layer, every live fetch and every geometry request keys off this
+    value. It is deliberately the ONLY route id in the tree: the bug this fixed
+    was a live feed scoped to the whole network while the map assumed one route,
+    so the scope has to have a single source of truth rather than being
+    re-derived per consumer.
+  */
+  const selectedRouteId = journey.selectedRouteId
+
+  // Scoped to the selected route. Passing the id here is what stops the map
+  // receiving - and drawing - buses belonging to routes the user did not pick.
+  const { buses, transport, error: busError } = useLiveBuses(selectedRouteId)
+
+  const routeStops = useRouteStops(selectedRouteId, {
     fromId: journey.plan.origin?.id,
     toId: journey.plan.destination?.id,
   })
 
   // Real road geometry for the selected route. The map draws this instead of
   // joining stop coordinates, which would cut straight across the city.
-  const routeShape = useRouteShape(journey.selected?.routeId)
+  const routeShape = useRouteShape(selectedRouteId)
 
   return (
     <div className="relative flex h-full min-h-0 flex-col gap-3 p-3 md:p-4">
@@ -404,8 +534,9 @@ export default function Dashboard() {
             <MapView
               buses={buses}
               journey={journey}
-routeStops={routeStops}
+              routeStops={routeStops}
               routeShape={routeShape}
+              selectedRouteId={selectedRouteId}
               transport={transport}
               error={busError}
               query={query}
@@ -423,6 +554,8 @@ routeStops={routeStops}
               onToChange={setTo}
               accessibilityOnly={accessibilityOnly}
               onAccessibilityOnlyChange={setAccessibilityOnly}
+              sort={sort}
+              onSortChange={setSort}
             />
           )}
 
@@ -431,7 +564,7 @@ routeStops={routeStops}
       </div>
 
       {/* ---- foot: fleet metrics strip ---- */}
-      <MetricsBar buses={buses} transport={transport} />
+      <MetricsBar buses={buses} transport={transport} routeCode={journey.selected?.code ?? null} />
     </div>
   )
 }

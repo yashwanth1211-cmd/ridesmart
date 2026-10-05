@@ -5,6 +5,8 @@ OWNER: Member 5 (integration). Replaces Member 2's hardcoded ACTIVE_BUSES list.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -17,14 +19,17 @@ router = APIRouter(prefix="/buses", tags=["Tracking"])
 
 
 @router.get("/active", response_model=list[BusPosition])
-def get_active_buses(db: Session = Depends(get_db)):
-    """Latest position of every active bus.
+def get_active_buses(route_id: int | None = None, db: Session = Depends(get_db)):
+    """Latest position of every active bus, optionally narrowed to one route.
 
     Frontend polls this every 2 seconds as a fallback if the WebSocket is
     unavailable. The response is [] only when no telemetry has been written yet
     - run the simulator, or call /buses/ingest.
+
+    `route_id` is optional and additive: omitting it returns the whole fleet
+    exactly as before, so existing clients and the contract are unaffected.
     """
-    return active_positions(db)
+    return active_positions(db, route_id=route_id)
 
 
 @router.post("/ingest", response_model=IngestResponse)
