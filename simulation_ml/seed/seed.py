@@ -196,6 +196,9 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 # ---------------------------------------------------------------------------
 # Buses  ->  (reg_no, capacity, wheelchair, low_floor)
+#
+# display_name ("Bus 1"...) is assigned from position when inserted, never
+# derived from reg_no: TN09AB1234 says nothing to anyone at a stop.
 # ---------------------------------------------------------------------------
 BUSES = [
     ("TN09AB1234", 50, True, True),    # bus 1 -> V1 trip  (crowded, accessible)
@@ -255,10 +258,19 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
 
     with Session() as s:
         has_demo = s.query(Route).count() > 0
-        # route_number is empty on the three hand-authored OSM routes and set on
-        # every synthetic one, so it is a reliable "has this run already happened"
-        # marker even when the network is being added to an existing database.
-        has_network = s.query(Route).filter(Route.route_number != "").count() > 0
+        # "Has the synthetic network been added?" is asked by looking for one of
+        # the numbers the network actually declares. It used to be
+        # route_number != "", which only worked while the three demo routes left
+        # that column empty. They populate it now (V1/V2/M1), so the
+        # old test reports a networked database after a plain demo seed and
+        # silently skips --network. Naming the numbers is explicit and stays
+        # correct whatever the demo routes carry.
+        from simulation_ml.seed.network_data import ROUTE_SPECS
+
+        network_numbers = {spec[0] for spec in ROUTE_SPECS}
+        has_network = (
+            s.query(Route).filter(Route.route_number.in_(network_numbers)).count() > 0
+        )
 
         if has_demo:
             print("Database already seeded - skipping. Use --reset to rebuild.")
@@ -274,9 +286,19 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
             print(f"  stops   {len(STOPS)}")
 
             # ---- buses ------------------------------------------------------
+            # Numbered by position, and the number is a property of the FLEET,
+            # not of this seed run: seed --network appends to the same database,
+            # so it has to continue from however many buses already exist or two
+            # vehicles would answer to "Bus 4". Fresh demo seed starts at 1.
             bus_objs = [
-                Bus(reg_no=reg, capacity=cap, wheelchair=wc, low_floor=lf)
-                for reg, cap, wc, lf in BUSES
+                Bus(
+                    reg_no=reg,
+                    display_name=f"Bus {i}",
+                    capacity=cap,
+                    wheelchair=wc,
+                    low_floor=lf,
+                )
+                for i, (reg, cap, wc, lf) in enumerate(BUSES, start=1)
             ]
             for b in bus_objs:
                 s.add(b)
@@ -290,7 +312,11 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
             for spec in ROUTES:
                 rt = Route(
                     code=spec["code"],
-                    route_number=code,
+                    # `spec["code"]`, never the bare name `code`: that is the
+                    # loop variable left over from the STOPS loop above, so using
+                    # it here shipped the last stop's code ("STOP_CMC_CAMPUS") as
+                    # every route's passenger-facing route number.
+                    route_number=spec["code"],
                     name=spec["name"],
                     direction=spec["direction"],
                 )

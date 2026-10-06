@@ -67,6 +67,7 @@ class JourneyOption(BaseModel):
     route_name: str
     direction: str
     bus_id: int | None = None
+    bus_name: str | None = None
     bus_reg: str | None = None
     bus_type: str | None = None
     capacity: int | None = None
@@ -97,6 +98,7 @@ class JourneyLeg(BaseModel):
     route_name: str
     direction: str
     bus_id: int | None = None
+    bus_name: str | None = None
     bus_reg: str | None = None
     bus_type: str | None = None
     wheelchair_accessible: bool | None = None

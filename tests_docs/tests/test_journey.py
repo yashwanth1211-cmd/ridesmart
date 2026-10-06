@@ -511,6 +511,7 @@ class TestLiveAndSoonArriving:
 
 class TestResultDetail:
     REQUIRED_FIELDS = {
+        "bus_name",
         "bus_reg",
         "route_number",
         "route_name",

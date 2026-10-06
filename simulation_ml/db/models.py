@@ -362,6 +362,11 @@ class Bus(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     reg_no: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
+    # "Bus 1", "Bus 2"... A registration is the identity the DVLA cares about,
+    # but nobody points at a screen and says "look at TN09AB1234". The fleet
+    # needs a handle a passenger can actually use out loud, so this carries the
+    # short reference and `reg_no` stays the vehicle identity alongside it.
+    display_name: Mapped[str] = mapped_column(String(16), default="", nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
     wheelchair: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     low_floor: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -375,6 +380,7 @@ class Bus(Base):
     def as_dict(self) -> dict:
         return {
             "bus_id": self.id,
+            "bus_name": self.display_name or f"Bus {self.id}",
             "bus_reg": self.reg_no,
             "capacity": self.capacity,
             "wheelchair_accessible": bool(self.wheelchair),

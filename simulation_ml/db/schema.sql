@@ -62,14 +62,20 @@ CREATE INDEX ix_route_stop_lookup ON route_stop (route_id, stop_id, seq);
 -- bus_type is the service class: 'ordinary' city, 'express', or 'deluxe'
 -- intercity coach. It lives on the bus, not the route, because buses are
 -- reassigned between services over the day.
+-- display_name is the short reference a passenger says out loud ("Bus 4");
+-- reg_no is the vehicle registration and stays alongside it. Uniqueness is
+-- seeded by construction (sequential, fleet-wide) and asserted in tests
+-- rather than in a constraint, because the empty default is legal on a row
+-- inserted before seeding assigns one.
 CREATE TABLE bus (
-    id         INTEGER PRIMARY KEY,
-    reg_no     VARCHAR(24) NOT NULL UNIQUE,
-    capacity   INTEGER     NOT NULL DEFAULT 50,
-    wheelchair BOOLEAN     NOT NULL DEFAULT 0,
-    low_floor  BOOLEAN     NOT NULL DEFAULT 0,
-    bus_type   VARCHAR(10) NOT NULL DEFAULT 'ordinary',
-    active     BOOLEAN     NOT NULL DEFAULT 1,
+    id           INTEGER PRIMARY KEY,
+    reg_no       VARCHAR(24) NOT NULL UNIQUE,
+    display_name VARCHAR(16) NOT NULL DEFAULT '',
+    capacity     INTEGER     NOT NULL DEFAULT 50,
+    wheelchair   BOOLEAN     NOT NULL DEFAULT 0,
+    low_floor    BOOLEAN     NOT NULL DEFAULT 0,
+    bus_type     VARCHAR(10) NOT NULL DEFAULT 'ordinary',
+    active       BOOLEAN     NOT NULL DEFAULT 1,
     CONSTRAINT ck_bus_type CHECK (bus_type IN ('ordinary', 'express', 'deluxe'))
 );
 CREATE INDEX ix_bus_bus_type ON bus (bus_type);

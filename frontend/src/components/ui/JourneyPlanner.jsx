@@ -176,7 +176,7 @@ export default function JourneyPlanner({
       result.ok
         ? {
             ok: true,
-            text: `${selected.busReg ?? selected.code} set to ${load} passengers. Options re-planned.`,
+            text: `${selected.busName ?? selected.busReg ?? selected.code} set to ${load} passengers. Options re-planned.`,
           }
         : { ok: false, text: result.message },
     )
@@ -341,9 +341,11 @@ export default function JourneyPlanner({
                     <span className="ml-2 text-[13px] font-normal text-gray-300">{selected.name}</span>
                   ) : null}
                 </h2>
-                {selected.busReg && (
+                {(selected.busName || selected.busReg) && (
                   <p className="text-[12px] text-gray-400">
-                    Bus {selected.busReg}
+                    {selected.busName ??
+                      (selected.busId != null ? `Bus ${selected.busId}` : selected.busReg)}
+                    {selected.busReg && selected.busName ? ` · ${selected.busReg}` : ''}
                     {selected.busType ? ` · ${selected.busType}` : ''}
                     {selected.direction
                       ? ` · ${selected.direction === 'up' ? 'up' : 'down'} direction`
@@ -460,7 +462,7 @@ export default function JourneyPlanner({
                 {activeTrip ? (
                   <>
                     <p className="text-[11px] text-gray-500">
-                      {selected.busReg ?? selected.code} (trip {activeTrip.tripId}) currently
+                      {selected.busName ?? selected.busReg ?? selected.code} (trip {activeTrip.tripId}) currently
                       reports {activeTrip.load ?? '—'}/{activeTrip.capacity ?? '—'}.
                     </p>
                     <div className="flex flex-wrap gap-2">

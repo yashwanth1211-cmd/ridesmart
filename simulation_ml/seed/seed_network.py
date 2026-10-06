@@ -231,15 +231,22 @@ def seed_network(session: Session) -> dict:
     session.flush()
 
     # ---- fleet -----------------------------------------------------------
+    # Continue the fleet numbering rather than restarting it. These 96 buses are
+    # added to a database that already holds the demo fleet, so "Bus 4" has to
+    # stay unique - a second vehicle with that name would make the map's bus
+    # label ambiguous rather than helpful.
+    next_number = (session.query(Bus.id).count() or 0) + 1
     bus_objs: dict[tuple[str, str], list[Bus]] = {}
     for entry in fleet:
         row = Bus(
             reg_no=entry["reg_no"],
+            display_name=f"Bus {next_number}",
             capacity=entry["capacity"],
             wheelchair=entry["wheelchair"],
             low_floor=entry["low_floor"],
             bus_type=entry["bus_type"],
         )
+        next_number += 1
         session.add(row)
         bus_objs.setdefault((entry["route_number"], entry["direction"]), []).append(row)
 

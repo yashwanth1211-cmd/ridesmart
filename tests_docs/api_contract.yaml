@@ -463,9 +463,16 @@ components:
 
     BusPosition:
       type: object
-      required: [bus_id, lat, lon, ts]
+      required: [bus_id, bus_name, bus_reg, lat, lon, ts]
       properties:
         bus_id: { type: integer, example: 1 }
+        bus_name:
+          type: string
+          description: >
+            Short fleet reference a passenger can say out loud ("Bus 3"). Unique
+            across the fleet. The registration identifies the vehicle; this is
+            the label the UI leads with.
+          example: Bus 3
         bus_reg: { type: string, example: TN09AB1234 }
         trip_id: { type: integer, example: 1 }
         route_id: { type: integer, example: 21 }
@@ -643,6 +650,13 @@ components:
           type: integer
           nullable: true
           description: null for a scheduled departure
+        bus_name:
+          type: string
+          nullable: true
+          description: >
+            Short fleet reference ("Bus 3"), unique across the fleet. null for a
+            scheduled departure, because no vehicle has been allocated yet.
+          example: Bus 3
         bus_reg:
           type: string
           nullable: true
@@ -776,6 +790,7 @@ components:
         route_name: { type: string, example: Arakkonam - Vellore }
         direction: { type: string, enum: [up, down] }
         bus_id: { type: integer, nullable: true }
+        bus_name: { type: string, nullable: true, example: Bus 3 }
         bus_reg: { type: string, nullable: true, example: TN09AB1060 }
         bus_type: { type: string, enum: [ordinary, express, deluxe] }
         arrives_in_min: { type: integer, example: 4 }

@@ -133,6 +133,8 @@ export default function LiveMap({
       tripId: x.tripId,
       routeId: x.routeId,
       routeCode: x.routeCode ?? '',
+      // The reference a passenger reads on the marker; reg stays for detail.
+      name: x.name ?? '',
       reg: x.reg ?? '',
       crowd: x.crowd,
       load: x.load,
@@ -375,6 +377,8 @@ export default function LiveMap({
         <div class="mb-0.5 flex items-center gap-1.5 font-medium">
           <span class="inline-block h-2 w-2 rounded-full" style="background:${crowd.color}"></span>
           ${p.routeCode}
+          ${p.name ? `<span class="font-normal text-amber-200/90">${p.name}</span>` : ''}
+          ${p.reg ? `<span class="text-[10px] text-gray-500">${p.reg}</span>` : ''}
         </div>
         <div class="text-gray-300">Crowd Level:
           <span class="font-medium" style="color:${crowd.color}">${crowd.label}</span>

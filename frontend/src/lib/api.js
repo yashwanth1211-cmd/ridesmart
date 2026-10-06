@@ -339,6 +339,9 @@ export function mapBusPosition(entry) {
     tripId: entry.trip_id ?? null,
     routeId: entry.route_id ?? null,
     routeCode: entry.route_code ?? null,
+    // Short reference, "Bus 4" - the label shown large. `reg` stays as the
+    // smaller vehicle detail underneath it.
+    name: entry.bus_name ?? null,
     reg: entry.bus_reg ?? null,
     lat: lat(entry),
     lon: lon(entry),
@@ -533,6 +536,7 @@ export function mapJourneyOption(entry) {
 
     kind: isLive ? 'live' : 'scheduled',
     busId: entry.bus_id ?? null,
+    busName: entry.bus_name ?? null,
     busReg: entry.bus_reg ?? null,
     busType: entry.bus_type ?? null,
 
@@ -569,6 +573,8 @@ export function mapJourneyLeg(entry) {
     name: entry.route_name,
     direction: entry.direction,
     busId: entry.bus_id,
+    // Not `name` - that key is already the ROUTE name in this mapper.
+    busName: entry.bus_name ?? null,
     busReg: entry.bus_reg,
     busType: entry.bus_type,
     arrivesInMin: normalizeEta(entry.arrives_in_min) ?? 0,
@@ -776,6 +782,7 @@ export const DEMO_JOURNEY = {
       delayMin: 1,
       kind: 'live',
       busId: 1,
+      busName: 'Bus 1',
       busReg: 'TN09AB1001',
       busType: 'ordinary',
       crowd: 'medium',
@@ -813,6 +820,7 @@ export const DEMO_JOURNEY = {
       delayMin: 3,
       kind: 'live',
       busId: 2,
+      busName: 'Bus 2',
       busReg: 'TN09AB1002',
       busType: 'ordinary',
       crowd: 'low',
@@ -850,6 +858,7 @@ export const DEMO_JOURNEY = {
       delayMin: 1,
       kind: 'live',
       busId: 3,
+      busName: 'Bus 3',
       busReg: 'TN09AB1003',
       busType: 'ordinary',
       crowd: 'high',

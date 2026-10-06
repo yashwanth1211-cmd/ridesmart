@@ -99,6 +99,7 @@ def active_positions(db: Session, route_id: int | None = None) -> list[dict]:
         results.append(
             {
                 "bus_id": bus.id,
+                "bus_name": bus.display_name or f"Bus {bus.id}",
                 "bus_reg": bus.reg_no,
                 "trip_id": trip.id,
                 "route_id": trip.route_id,

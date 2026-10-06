@@ -471,6 +471,7 @@ def bus_options_for_route(
                 "route_name": match["name"],
                 "direction": match["direction"],
                 "bus_id": bus.id,
+                "bus_name": bus.display_name or f"Bus {bus.id}",
                 "bus_reg": bus.reg_no,
                 "bus_type": bus.bus_type,
                 "capacity": bus.capacity,
@@ -516,6 +517,9 @@ def bus_options_for_route(
                 "route_name": match["name"],
                 "direction": match["direction"],
                 "bus_id": None,
+                # No vehicle assigned yet, so no name either. Inventing one for a
+                # timetable slot would claim a bus that has not been allocated.
+                "bus_name": None,
                 "bus_reg": None,
                 "bus_type": None,
                 "capacity": None,
@@ -697,6 +701,7 @@ def _leg_payload(option: dict) -> dict:
         "route_name": option["route_name"],
         "direction": option["direction"],
         "bus_id": option["bus_id"],
+        "bus_name": option.get("bus_name"),
         "bus_reg": option["bus_reg"],
         "bus_type": option["bus_type"],
         "wheelchair_accessible": option["wheelchair_accessible"],
@@ -827,6 +832,7 @@ def _option_payload(option: dict) -> dict:
         "route_name": option["route_name"],
         "direction": option["direction"],
         "bus_id": option["bus_id"],
+        "bus_name": option.get("bus_name"),
         "bus_reg": option["bus_reg"],
         "bus_type": option["bus_type"],
         "capacity": option["capacity"],

@@ -213,6 +213,7 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
     return buses.filter(
       (b) =>
         b.routeCode?.toLowerCase().includes(q) ||
+        b.name?.toLowerCase().includes(q) ||
         b.reg?.toLowerCase().includes(q) ||
         String(b.busId).includes(q),
     )
@@ -279,9 +280,14 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
                       bus.busId === focusedBusId ? 'border-amber-400/50' : ''
                     }`}
                   >
-                    <span className="flex w-12 shrink-0 flex-col">
+                    <span className="flex w-16 shrink-0 flex-col gap-0.5">
                       <span className="text-[13px] font-medium text-white">{bus.routeCode ?? '—'}</span>
-                      <span className="text-[10px] text-gray-500">{bus.reg ?? `bus ${bus.busId}`}</span>
+                      {/* Name first - "Bus 3" is what someone reads out loud.
+                          The registration stays underneath as the vehicle detail. */}
+                      <span className="text-[11px] font-medium text-amber-200/90">
+                        {bus.name ?? `Bus ${bus.busId}`}
+                      </span>
+                      {bus.reg && <span className="text-[9px] text-gray-600">{bus.reg}</span>}
                     </span>
 
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -309,7 +315,10 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
         {focused && (
           <section className="glass-warm flex flex-col gap-3 p-4">
             <h2 className="text-[13px] font-medium text-white">
-              {focused.routeCode ?? 'Bus'} · {focused.reg ?? focused.busId}
+              {focused.routeCode ?? 'Bus'} · {focused.name ?? `Bus ${focused.busId}`}
+              {focused.reg && (
+                <span className="ml-2 text-[11px] font-normal text-gray-500">{focused.reg}</span>
+              )}
             </h2>
             <CrowdIndicator level={focused.crowd} load={focused.load} capacity={focused.capacity} />
             <dl className="grid grid-cols-2 gap-2 text-[12px]">

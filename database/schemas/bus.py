@@ -11,6 +11,9 @@ from pydantic import BaseModel
 
 class BusPosition(BaseModel):
     bus_id: int
+    # Short reference, "Bus 4". The reg stays next to it: the name is what a
+    # passenger says, the reg is what identifies the vehicle.
+    bus_name: str
     bus_reg: str
     trip_id: int
     route_id: int

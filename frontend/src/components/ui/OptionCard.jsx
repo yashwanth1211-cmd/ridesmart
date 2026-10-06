@@ -96,7 +96,14 @@ export default function OptionCard({ option, selected = false, onSelect = null, 
         >
           {isLive ? <Bus size={12} /> : <Clock size={12} />}
           {isLive
-            ? (option.busReg ?? `bus ${option.busId}`)
+            ? // Name is the label the passenger reads; the registration stays
+              // beside it in smaller type so both survive on the card.
+              <>
+                {option.busName ?? `bus ${option.busId}`}
+                {option.busReg && (
+                  <span className="ml-1.5 text-[10px] text-gray-500">{option.busReg}</span>
+                )}
+              </>
             : (option.departsAt
                 ? `departs ${new Date(option.departsAt).toLocaleTimeString([], {
                     hour: '2-digit',
@@ -247,7 +254,8 @@ export function TransferCard({ option }) {
             <span className="text-gray-300">{leg.stops?.[0]?.name ?? '—'}</span>
             <span className="text-gray-600">→</span>
             <span className="text-gray-300">{leg.stops?.[leg.stops.length - 1]?.name ?? '—'}</span>
-            {leg.busReg && <span className="text-gray-500">{leg.busReg}</span>}
+            {leg.busName && <span className="text-gray-400">{leg.busName}</span>}
+            {leg.busReg && <span className="text-gray-600">{leg.busReg}</span>}
             <span className="text-gray-500">
               ({leg.arrivesInMin === 0 ? 'at the stop' : `${leg.arrivesInMin} min`})
             </span>

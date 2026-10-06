@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from simulation_ml.db.models import Crowd, Route, Stop, Trip, crowd_level_for
+from simulation_ml.db.models import Bus, Crowd, Route, Stop, Trip, crowd_level_for
 
 CROWD_LEVELS = {"low", "med", "high"}
 
@@ -26,6 +26,82 @@ CROWD_LEVELS = {"low", "med", "high"}
 class TestSeedData:
     def test_seed_has_three_routes(self, session):
         assert session.query(Route).count() == 3
+
+    def test_route_number_is_the_routes_own_code(self, session):
+        """route_number must never carry a stop's code.
+
+        Regression. The seed built each Route with `route_number=code`, where
+        `code` was the loop variable left over from the STOPS loop, so all three
+        routes shipped "STOP_CMC_CAMPUS" - the last stop in the list - as their
+        passenger-facing route number. The API contract documents route_number as
+        the number a passenger reads on the bus, so this shipped a stop code in
+        a field that is rendered next to the route name.
+
+        The tell is that route_number must equal the route's own code, and must
+        not equal any stop's code. Both are asserted because either one alone
+        would pass for a route that happened to be named after one of its stops.
+        """
+        stop_codes = {s.code for s in session.query(Stop).all()}
+
+        for route in session.query(Route).all():
+            assert route.route_number == route.code, (
+                f"{route.code} has route_number {route.route_number!r}"
+            )
+            assert route.route_number not in stop_codes, (
+                f"{route.code} is reporting a stop code as its route number"
+            )
+
+    def test_route_numbers_are_distinct(self, session):
+        """Two routes sharing a route_number are indistinguishable to the journey search.
+
+        route_number is the identity the journey endpoint groups directions by,
+        so V1, V2 and M1 each need their own.
+        """
+        numbers = [r.route_number for r in session.query(Route).all()]
+        assert len(set(numbers)) == len(numbers), f"duplicate route_numbers: {numbers}"
+
+    def test_every_bus_has_a_speakable_name(self, session):
+        """Each bus needs a short reference a passenger can actually say.
+
+        The registration is the vehicle's identity but nobody points at a
+        screen and says "look at TN09AB1234". These tests pin the properties
+        that make the label usable rather than the exact values: the count
+        changes when the fleet does, and a fleet-wide unique "Bus N" is the
+        whole point.
+        """
+        buses = session.query(Bus).all()
+        assert buses, "no buses seeded"
+
+        names = []
+        for bus in buses:
+            assert bus.display_name, f"{bus.reg_no} has no display_name"
+            assert bus.display_name.startswith("Bus "), (
+                f"{bus.reg_no} has display_name {bus.display_name!r}, expected 'Bus N'"
+            )
+            suffix = bus.display_name.removeprefix("Bus ")
+            assert suffix.isdigit(), f"{bus.display_name} is not numbered"
+            # The name must not just be the registration under another key,
+            # or we have added a field that carries nothing new.
+            assert bus.display_name != bus.reg_no
+            names.append(bus.display_name)
+
+        assert len(set(names)) == len(names), f"two buses share a name: {names}"
+        assert len(set(names)) == len(buses)
+
+    def test_bus_names_are_consecutive_from_one(self, session):
+        """Numbering must be fleet-wide and dense.
+
+        seed --network appends to the same database as the demo fleet, so a
+        second vehicle answering to "Bus 4" would make every bus label on the
+        map ambiguous. Starting at 1 is what makes the reference short enough
+        to say.
+        """
+        numbers = sorted(
+            int(b.display_name.removeprefix("Bus "))
+            for b in session.query(Bus).all()
+        )
+        assert numbers[0] == 1, f"fleet numbering starts at {numbers[0]}"
+        assert numbers == list(range(1, len(numbers) + 1)), f"gap in numbering: {numbers}"
 
     def test_seed_has_real_stops(self, session):
         # 23 real OSM stops, not the 12 hand-written placeholders.
