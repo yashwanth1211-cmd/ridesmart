@@ -48,9 +48,17 @@ export const CROWD_THRESHOLDS = { low: 0.4, high: 0.75 }
  * of that span so the map opens on the whole network rather than on [0, 0] in
  * the ocean. LiveMap fitBounds the selected route once its shape loads, so this
  * is only the pre-fit fallback.
+ *
+ * ORDER MATTERS. MapLibre takes LngLatLike arrays as [lng, lat], the reverse of
+ * the [lat, lng] convention used everywhere else in this codebase (database,
+ * GeoJSON, the OSM overpass queries). Writing the Vellore pair the natural way
+ * round centres the map on lng 12.9 / lat 79.1 - Svalbard - and the map paints
+ * a featureless sheet of OSM land colour. fitBounds only rescues it AFTER a
+ * route is selected, so an unselected map sits there looking blank. Always
+ * swap: longitude first.
  */
 export const MAP_DEFAULTS = {
-  center: [12.9461, 79.1404],
+  center: [79.1404, 12.9461],
   zoom: 12.4,
   minZoom: 10,
   maxZoom: 18,
