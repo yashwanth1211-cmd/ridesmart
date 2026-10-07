@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { busSocketUrl, config, getActiveBuses, mapBusPosition } from '@/lib/api'
 
 /** Stable identity so "no buses for this route" does not re-render on every tick. */
@@ -13,29 +13,36 @@ const EMPTY_BUSES = []
 const OPEN_SETTLE_MS = 120
 
 /**
- * Live bus positions for ONE route, preferring the WebSocket and falling back
- * to polling.
+ * Live bus positions for ONE OR MORE routes, preferring the WebSocket and
+ * falling back to polling.
+ *
+ * WHY "MORE THAN ONE": the journey map is scoped to the selected legs. A direct
+ * bus is one leg, so one route id; a transfer is two legs, so two. `routeIds`
+ * takes an array (a single id is also accepted) and one subscription is opened
+ * per route, merged into one bus list.
  *
  * THE SCOPE IS THE POINT OF THIS HOOK. The version before took no arguments,
  * fetched /api/buses/active with no route filter, and passed the result to the
  * map, which drew every bus on the network whatever route was selected. The
  * filter lived only in the map's paint layer as a highlight halo, so it changed
  * how a bus looked without ever removing one. The scope now lives here, in the
- * fetch itself, and the map is handed only the selected route's buses.
+ * fetch itself, and the map is handed only the requested routes' buses. With a
+ * transfer that means buses from BOTH legs - never a bus from a route the
+ * passenger is not travelling on.
  *
  * The contract says /api/ws/buses "pushes the same BusPosition array as
  * /api/buses/active roughly every 2 seconds" and that clients "must tolerate a
  * heartbeat-only message", and /api/buses/active is the documented polling
- * fallback. So the order is:
+ * fallback. So per route the order is:
  *
- *   1. open the socket, scoped to routeId, and take data from it
+ *   1. open the socket, scoped to the route, and take data from it
  *   2. if no frame arrives within wsGraceMs, start polling and keep retrying
  *      the socket in the background
  *   3. the moment a socket frame lands, stop polling
  *
- * routeId drives the effect's dependency list, so switching routes tears down
- * the old socket and interval before the new ones start. That is what stops a
- * deselected route from continuing to push updates.
+ * The route set drives the effect's dependency list, so switching journeys
+ * tears down the old sockets and intervals before the new ones start. That is
+ * what stops a deselected route from continuing to push updates.
  *
  * ONE RULE, easy to get wrong: normalise exactly once, at the boundary where
  * wire data enters. getActiveBuses() already returns UI-shaped rows, and a raw
@@ -49,15 +56,28 @@ const OPEN_SETTLE_MS = 120
  * the array identity is kept stable when the payload has not meaningfully
  * changed - only bus positions, counts and the crowd band are compared.
  */
-export function useLiveBuses(routeId = null) {
+export function useLiveBuses(routeIds = null) {
+  const list = useMemo(() => {
+    if (routeIds == null) return []
+    const ids = Array.isArray(routeIds) ? routeIds : [routeIds]
+    // A duplicate route (two selections on one corridor) must not open two
+    // sockets for it.
+    return [...new Set(ids.map((r) => Number(r)).filter((r) => Number.isFinite(r) && r > 0))].sort(
+      (a, b) => a - b,
+    )
+  }, [routeIds])
+
   /*
-    The routeId the data belongs to travels WITH the data rather than being
-    cleared with a setState when the selection changes. Deriving "these buses
-    are stale" during render is what makes rapid switching safe: a frame for the
-    previous route can never be shown under the new selection, and no extra
+    Both state slots key on the same scope signature - the sorted, joined route
+    ids - and the signature travels WITH the data. Deriving "these buses are
+    stale" during render is what makes rapid switching safe: a frame for the
+    previous journey can never be shown under the new selection, and no extra
     render pass is needed to blank the list. Same shape as useRouteStops.
   */
-  const [loaded, setLoaded] = useState({ routeId: null, buses: [] })
+  const scopeKey = list.length > 0 ? list.join(',') : 'all'
+
+  /** Per-route arrays: { [routeId]: BusPosition[] } for the current scope. */
+  const [loaded, setLoaded] = useState({ key: '', byRoute: {} })
 
   /*
     The transport label travels with its scope, for the same reason the buses
@@ -65,15 +85,13 @@ export function useLiveBuses(routeId = null) {
     during render commit, which re-renders a second time for a value that can be
     derived.
   */
-  const [link, setLink] = useState({ routeId: null, transport: 'connecting' })
+  const [link, setLink] = useState({ key: '', transport: 'connecting' })
 
   const markTransport = useCallback((scope, value) => {
-    setLink((prev) => (prev.routeId === scope && prev.transport === value ? prev : { routeId: scope, transport: value }))
+    setLink((prev) => (prev.key === scope && prev.transport === value ? prev : { key: scope, transport: value }))
   }, [])
 
   const [error, setError] = useState(null)
-
-  const gotSocketData = useRef(false)
 
   /** Cheap signature so an identical payload does not trigger a re-render. */
   const signature = (rows) =>
@@ -83,44 +101,39 @@ export function useLiveBuses(routeId = null) {
       .join('|')
 
   /** Accepts normalised rows only. See the note above. */
-  const apply = useCallback((scope, rows) => {
-    setLoaded((prev) =>
-      prev.routeId === scope && signature(prev.buses) === signature(rows) ? prev : { routeId: scope, buses: rows },
-    )
+  const apply = useCallback((scope, routeId, rows) => {
+    setLoaded((prev) => {
+      const stored = prev.byRoute[routeId] ?? []
+      if (prev.key === scope && signature(stored) === signature(rows)) return prev
+      return { key: scope, byRoute: { ...prev.byRoute, [routeId]: rows } }
+    })
   }, [])
 
   useEffect(() => {
-    // No route selected means no vehicles: nothing is fetched and no socket is
-    // opened, so the map genuinely shows nothing rather than showing a default.
-    // The transport label resets itself during render (see the derivation at
-    // the bottom) rather than being set from here.
-    if (routeId == null) return undefined
+    // No journey selected means show ALL buses on the map.
 
     let cancelled = false
-    let graceTimer = null
-    let retryTimer = null
-    let pollTimer = null
-    let socket = null
 
-    // Fresh subscription for a new route: the previous socket's first frame
-    // must not suppress this one's grace timer.
-    gotSocketData.current = false
+    // All buses (no selection) - poll once for all
+    const per = new Map()
 
-    const stopPolling = () => {
-      if (pollTimer) {
-        clearInterval(pollTimer)
-        pollTimer = null
+    const stopPolling = (routeId) => {
+      const state = per.get(routeId)
+      if (state?.pollTimer) {
+        clearInterval(state.pollTimer)
+        state.pollTimer = null
       }
     }
 
-    const startPolling = () => {
-      if (pollTimer) return
-      markTransport(routeId, 'poll')
+    const startPolling = (routeId) => {
+      const state = per.get(routeId)
+      if (!state || state.pollTimer) return
+      markTransport(scopeKey, 'poll')
 
       const tick = async () => {
         try {
           // Already normalised by the adapter - do NOT map again.
-          apply(routeId, await getActiveBuses(routeId))
+          apply(scopeKey, routeId, await getActiveBuses(routeId))
           setError(null)
         } catch (err) {
           if (cancelled) return
@@ -129,11 +142,8 @@ export function useLiveBuses(routeId = null) {
       }
 
       tick()
-      pollTimer = setInterval(tick, config.busPollIntervalMs)
+      state.pollTimer = setInterval(tick, config.busPollIntervalMs)
     }
-
-    let retries = 0
-    let openTimer = null
 
     /*
       A burst of route switches must not open a socket per click.
@@ -145,12 +155,14 @@ export function useLiveBuses(routeId = null) {
       settle window collapses a burst into one socket for the route the user
       actually ended on; 120ms is imperceptible next to the 2s push interval.
     */
-    const openSocket = () => {
+    const openSocket = (routeId) => {
       if (cancelled) return
+      const state = per.get(routeId)
+      if (!state) return
 
       const url = busSocketUrl(routeId)
       if (!url || typeof WebSocket === 'undefined') {
-        startPolling()
+        startPolling(routeId)
         return
       }
 
@@ -158,14 +170,14 @@ export function useLiveBuses(routeId = null) {
       try {
         ws = new WebSocket(url)
       } catch {
-        startPolling()
+        startPolling(routeId)
         return
       }
-      socket = ws
+      state.socket = ws
 
       // If the socket accepts but never delivers, poll rather than show nothing.
-      graceTimer = setTimeout(() => {
-        if (!gotSocketData.current) startPolling()
+      state.graceTimer = setTimeout(() => {
+        if (!state.gotSocketData) startPolling(routeId)
       }, config.wsGraceMs)
 
       ws.onopen = () => {
@@ -184,14 +196,14 @@ export function useLiveBuses(routeId = null) {
         // that is not an array of positions is ignored rather than rendered.
         if (!Array.isArray(payload)) return
 
-        gotSocketData.current = true
-        clearTimeout(graceTimer)
-        stopPolling()
-        retries = 0
-        markTransport(routeId, 'ws')
+        state.gotSocketData = true
+        clearTimeout(state.graceTimer)
+        stopPolling(routeId)
+        state.retries = 0
+        markTransport(scopeKey, 'ws')
         setError(null)
         // Raw wire frame, so this is the one place that maps.
-        apply(routeId, payload.map(mapBusPosition))
+        apply(scopeKey, routeId, payload.map(mapBusPosition))
       }
 
       ws.onerror = () => {
@@ -199,64 +211,73 @@ export function useLiveBuses(routeId = null) {
       }
 
       ws.onclose = () => {
-        clearTimeout(graceTimer)
+        clearTimeout(state.graceTimer)
         if (cancelled) return
 
-        startPolling()
-        const delay = Math.min(1000 * 2 ** retries, 15000)
-        retries += 1
-        retryTimer = setTimeout(connect, delay)
+        startPolling(routeId)
+        const delay = Math.min(1000 * 2 ** state.retries, 15000)
+        state.retries += 1
+        state.retryTimer = setTimeout(() => openSocket(routeId), delay)
       }
     }
 
-    const connect = () => {
-      clearTimeout(openTimer)
-      openTimer = setTimeout(openSocket, OPEN_SETTLE_MS)
+    const connect = (routeId) => {
+      const state = per.get(routeId)
+      if (!state) return
+      clearTimeout(state.openTimer)
+      state.openTimer = setTimeout(() => openSocket(routeId), OPEN_SETTLE_MS)
     }
 
-    connect()
+    for (const routeId of list) connect(routeId)
 
     return () => {
       cancelled = true
-      clearTimeout(openTimer)
-      clearTimeout(graceTimer)
-      clearTimeout(retryTimer)
-      stopPolling()
-      /*
-        Closing the socket is what actually stops the previous route updating.
-        Setting `cancelled` only stops THIS hook instance writing to state - the
-        old socket stays open server-side, keeps its 2-second timer, and keeps
-        pushing a route the user has already switched away from.
-      */
-      if (socket) {
-        socket.onclose = null
-        socket.onerror = null
-        socket.onmessage = null
-        socket.onopen = null
+      for (const state of per.values()) {
+        clearTimeout(state.openTimer)
+        clearTimeout(state.graceTimer)
+        clearTimeout(state.retryTimer)
+        clearInterval(state.pollTimer)
+        /*
+          Closing the socket is what actually stops the previous route updating.
+          Setting `cancelled` only stops THIS hook instance writing to state -
+          the old socket stays open server-side, keeps its 2-second timer, and
+          keeps pushing a route the user has already switched away from.
+        */
+        const ws = state.socket
+        if (ws) {
+          ws.onclose = null
+          ws.onerror = null
+          ws.onmessage = null
+          ws.onopen = null
 
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.close()
-        } else if (socket.readyState === WebSocket.CONNECTING) {
-          // close() on a socket that has not finished its handshake never
-          // reaches the server and makes the browser log "closed before the
-          // connection is established". Waiting for open and closing then is
-          // the only way to abandon it cleanly.
-          socket.addEventListener('open', () => socket.close(), { once: true })
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close()
+          } else if (ws.readyState === WebSocket.CONNECTING) {
+            // close() on a socket that has not finished its handshake never
+            // reaches the server and makes the browser log "closed before the
+            // connection is established". Waiting for open and closing then is
+            // the only way to abandon it cleanly.
+            ws.addEventListener('open', () => ws.close(), { once: true })
+          }
         }
-        socket = null
       }
     }
-  }, [apply, markTransport, routeId])
+    // The effect's work is keyed entirely on the sorted route list; the helper
+    // callbacks are stable and `list` cannot change without its key changing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey])
 
   // Stale rows from a previous selection are never returned, so switching
-  // routes blanks the map immediately instead of painting the old route's buses
-  // until the first frame for the new one lands.
-  const buses = loaded.routeId === routeId ? loaded.buses : EMPTY_BUSES
+  // journeys blanks the map immediately instead of painting the old routes'
+  // buses until the first frame for the new one lands.
+  const buses =
+    loaded.key === scopeKey
+      ? (scopeKey === 'all'
+          ? (loaded.byRoute['__all__'] || [])
+          : Object.values(loaded.byRoute).flat())
+      : EMPTY_BUSES
 
-  // Derived for the same reason. A label reading "Live feed" while no route is
-  // selected, or after the selection moved on, is a claim about a connection
-  // that no longer exists.
-  const transport = routeId == null || link.routeId !== routeId ? 'connecting' : link.transport
+  const transport = list.length === 0 || link.key !== scopeKey ? 'connecting' : link.transport
 
   return { buses, transport, error, isLive: transport === 'ws' }
 }

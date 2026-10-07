@@ -20,6 +20,11 @@ only works if the seed deliberately creates it:
 V2 is slower AND empty, V1 is faster AND packed. Neither dominates, which is
 exactly the trade-off we want on screen.
 
+Each of the three routes runs THREE buses at different positions on the
+corridor, so the journey panel has multiple options to rank and re-rank instead
+of one candidate per route. Bus 4 is left unassigned as the out-of-service
+spare that exercises the "not running" status badge.
+
 DATA IS REAL
 ------------
 The corridor is Vellore - Katpadi in Tamil Nadu, running from Kingston
@@ -199,30 +204,46 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 #
 # display_name ("Bus 1"...) is assigned from position when inserted, never
 # derived from reg_no: TN09AB1234 says nothing to anyone at a stop.
+#
+# Bus 4 stays unassigned as the "out of service" spare, so the status badge on
+# the dashboard has a vehicle to point at. Buses 5-10 give every demo route
+# three running vehicles at different points of the corridor - one bus per
+# route would leave the "least crowded" ranking with nothing to reorder.
 # ---------------------------------------------------------------------------
 BUSES = [
-    ("TN09AB1234", 50, True, True),    # bus 1 -> V1 trip  (crowded, accessible)
-    ("TN09AB5678", 50, False, False),  # bus 2 -> V2 trip  (empty, basic)
-    ("TN09CD9012", 60, True, True),    # bus 3 -> M1 trip
-    ("TN09CD3456", 50, False, True),   # bus 4 -> spare / out of service demo
+    ("TN09AB1234", 50, True, True),    # bus 1  -> V1 trip  (crowded, accessible)
+    ("TN09AB5678", 50, False, False),  # bus 2  -> V2 trip  (empty, basic)
+    ("TN09CD9012", 60, True, True),    # bus 3  -> M1 trip
+    ("TN09CD3456", 50, False, True),   # bus 4  -> spare / out of service demo
+    ("TN09EF1234", 50, True, True),    # bus 5  -> V1 trip  (second V1 bus)
+    ("TN09EF5678", 60, False, False),  # bus 6  -> V1 trip  (third V1 bus)
+    ("TN09GH9012", 50, False, True),   # bus 7  -> V2 trip  (second V2 bus)
+    ("TN09GH3456", 50, True, False),   # bus 8  -> V2 trip  (third V2 bus)
+    ("TN09IJ1234", 60, True, True),    # bus 9  -> M1 trip  (second M1 bus)
+    ("TN09IJ5678", 50, False, False),  # bus 10 -> M1 trip  (third M1 bus)
 ]
 
 # ---------------------------------------------------------------------------
-# Trips.  seed_load is the headline demo number.
+# Trips.  seed_load is the headline demo number; progress is where on the route
+# the bus starts (0-1), so each corridor opens with its three buses spread out.
+#
+# The FIRST row per route is the crowd the two "first Crowd row" tests read:
+# V1 must stay 35/50 MED and V2 12/50 LOW, so new buses are appended after the
+# original rows, never inserted before them.
 # ---------------------------------------------------------------------------
 TRIPS = [
-    # (bus_index, route_code, seed_load)
-    (0, "V1", 35),  # 35/50 = 0.70 -> MED   the crowded fast option
-    (1, "V2", 12),  # 12/50 = 0.24 -> LOW   the empty slow option
-    (2, "M1", 52),  # 52/60 = 0.87 -> HIGH  proves the red band renders
-]
+    # (bus_index, route_code, seed_load, progress)
+    (0, "V1", 35, 0.28),   # 35/50 = 0.70 -> MED   the crowded fast option
+    (1, "V2", 12, 0.15),   # 12/50 = 0.24 -> LOW   the empty slow option
+    (2, "M1", 52, 0.40),   # 52/60 = 0.87 -> HIGH  proves the red band renders
 
-# Start each trip a little way along so buses are already moving on first run.
-INITIAL_PROGRESS = {
-    "V1": 0.28,
-    "V2": 0.15,
-    "M1": 0.40,
-}
+    (4, "V1", 22, 0.10),   # 22/50 = 0.44 -> MED   2nd V1 bus, tail of the queue
+    (5, "V1", 20, 0.72),   # 20/60 = 0.33 -> LOW   a light V1 run, far along
+    (6, "V2", 10, 0.45),   # 10/60 = 0.17 -> LOW   2nd V2 bus, mid-corridor
+    (7, "V2",  6, 0.85),   #  6/50 = 0.12 -> LOW   3rd V2 bus, near the terminus
+    (8, "M1", 44, 0.20),   # 44/60 = 0.73 -> MED   2nd M1 bus
+    (9, "M1", 30, 0.62),   # 30/50 = 0.60 -> MED   3rd M1 bus
+]
 
 
 def seed(reset: bool = False, url: str | None = None, include_network: bool = False) -> None:
@@ -230,11 +251,11 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
 
     include_network adds the synthetic Vellore - Katpadi network from
     simulation_ml/seed/network_data.py: 29 route numbers in both directions, a
-    96-vehicle fleet, through-the-day timetables and live trips for each bus.
+    90-vehicle fleet, through-the-day timetables and live trips for each bus.
 
-    That is 100 buses with the three demo routes, the top of the brief's 60-100
-    band. Busy city corridors get 4 buses and sparse ones 3, deliberately: with
-    one bus per route a given origin sees a single candidate and the "least
+    That is 100 buses with the ten-vehicle demo fleet, the top of the brief's
+    60-100 band. Busy city corridors get 4 buses and sparse ones 3, deliberately:
+    with one bus per route a given origin sees a single candidate and the "least
     crowded" ranking has nothing to reorder, so the feature would be present in
     the API and absent from the product.
 
@@ -290,10 +311,13 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
             # not of this seed run: seed --network appends to the same database,
             # so it has to continue from however many buses already exist or two
             # vehicles would answer to "Bus 4". Fresh demo seed starts at 1.
+            FUN_NAMES = ['Vellore Express', 'Katpadi Star', 'Fort Rider', 'Palar Pearl', 'Golden Express', 'Kingston Cruiser', 'Bagayam Bolt', 'Otteri Arrow', 'CMC Shuttle', 'Campus Link']
+            FUN_NAMES = ['Vellore Express', 'Katpadi Star', 'Fort Rider', 'Palar Pearl', 'Golden Express', 'Kingston Cruiser', 'Bagayam Bolt', 'Otteri Arrow', 'CMC Shuttle', 'Campus Link']
+            FUN_NAMES = ['Vellore Express', 'Katpadi Star', 'Fort Rider', 'Palar Pearl', 'Golden Express', 'Kingston Cruiser', 'Bagayam Bolt', 'Otteri Arrow', 'CMC Shuttle', 'Campus Link']
             bus_objs = [
                 Bus(
                     reg_no=reg,
-                    display_name=f"Bus {i}",
+                    display_name=FUN_NAMES[i-1] if i-1 < len(FUN_NAMES) else f"Bus {i}",
                     capacity=cap,
                     wheelchair=wc,
                     low_floor=lf,
@@ -384,11 +408,10 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
             # ---- trips ------------------------------------------------------
             now = utcnow()
             trip_by_route: dict[str, Trip] = {}
-            for bus_idx, route_code, seed_load in TRIPS:
+            for bus_idx, route_code, seed_load, progress in TRIPS:
                 spec = next(r for r in ROUTES if r["code"] == route_code)
                 rt = route_by_code[route_code]
                 bus = bus_objs[bus_idx]
-                progress = INITIAL_PROGRESS.get(route_code, 0.0)
 
                 tr = Trip(
                     bus_id=bus.id,
@@ -497,6 +520,8 @@ def seed(reset: bool = False, url: str | None = None, include_network: bool = Fa
         print(f"    campus anchor (not a surveyed bus bay): {', '.join(campus)}")
 
     print("\n  Demo story baked in:")
+    print("    each route runs three buses (Bus 4 is the out-of-service spare);")
+    print("    a crowd-band low/med/high sample sits at every stop on the map.")
     crowd_note = {"V1": "MED  35/50", "V2": "LOW  12/50", "M1": "HIGH 52/60 - red band"}
     for spec in ROUTES:
         code = spec["code"]
@@ -528,7 +553,7 @@ if __name__ == "__main__":
         "--network",
         action="store_true",
         help="also seed the synthetic Vellore - Katpadi network "
-             "(29 route numbers in both directions, 91 buses, timetables, live trips)",
+             "(29 route numbers in both directions, 90 buses, timetables, live trips)",
     )
     ap.add_argument("--url", default=None, help="override DATABASE_URL")
     args = ap.parse_args()
