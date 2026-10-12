@@ -25,7 +25,13 @@ import PredictionBadge from './PredictionBadge'
  * single ETA was the whole story, which is why this distinction only became
  * necessary once the options became buses.
  */
-export default function OptionCard({ option, selected = false, onSelect = null, rank = null }) {
+export default function OptionCard({
+  option,
+  selected = false,
+  onSelect = null,
+  rank = null,
+  fastest = false,
+}) {
   const eta = option.etaMin
   const wait = option.arrivesInMin
 
@@ -45,7 +51,7 @@ export default function OptionCard({ option, selected = false, onSelect = null, 
           : 'hover:border-white/20 hover:bg-white/10'
       }`}
     >
-      {/* header: rank, route code, name */}
+      {/* header: rank, route code, name, fastest callout */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {rank !== null && (
@@ -58,7 +64,14 @@ export default function OptionCard({ option, selected = false, onSelect = null, 
             </span>
           )}
           <div className="flex min-w-0 flex-col">
-            <span className="text-[14px] font-medium text-white">{option.code}</span>
+            <span className="flex items-center gap-1.5 text-[14px] font-medium text-white">
+              {option.code}
+              {fastest && (
+                <span className="rounded-md bg-amber-400/90 px-1.5 py-px text-[9px] font-bold tracking-wide text-black uppercase">
+                  Fastest
+                </span>
+              )}
+            </span>
             {option.name && (
               <span className="truncate text-[11px] text-gray-400">{option.name}</span>
             )}
@@ -210,20 +223,30 @@ export default function OptionCard({ option, selected = false, onSelect = null, 
 /**
  * One multi-leg option, for journeys with no direct bus.
  *
- * NOT selectable, and that is the honest choice rather than an omission. The map
- * is scoped to a single route - that invariant is what stops a bus belonging to
- * an unselected route being drawn on it - and a transfer spans two. Making it
- * selectable would mean either showing only one leg while implying both, or
- * breaking the scoping that the whole live map depends on.
+ * Selectable, and the point is in the change: the map previously scoped to a
+ * single route, so selecting a transfer would have meant drawing one leg while
+ * implying both. The journey now carries a sliced polyline PER LEG (shape) and
+ * the map draws one coloured road per leg, so a transfer is genuinely two
+ * coloured roads on screen. Selecting it is now honest, and it is the ONLY way
+ * someone without a direct bus can put their journey on the map.
  *
- * So the card states the two legs, the interchange and the total, and leaves the
- * choice of which to track to the direct buses.
+ * The card states the two legs, the interchange and the total, and lets the
+ * passenger pick it just like a direct bus.
  */
-export function TransferCard({ option }) {
+export function TransferCard({ option, selected = false, onSelect = null, fastest = false }) {
   const [first, second] = option.legs
 
   return (
-    <div className="glass-inset flex w-full flex-col gap-3 px-4 py-3.5">
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={`glass-inset flex w-full flex-col gap-3 px-4 py-3.5 text-left transition-colors ${
+        selected
+          ? 'border-brand-blue/70 bg-brand-blue/10'
+          : 'hover:border-white/20 hover:bg-white/10'
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="inline-flex w-fit items-center gap-1.5 rounded-md bg-amber-400/15 px-2 py-0.5 text-[11px] font-medium text-amber-300">
@@ -231,6 +254,11 @@ export function TransferCard({ option }) {
           </span>
           <span className="truncate text-[13px] text-gray-300">
             {option.via?.name ? `change at ${option.via.name}` : 'change of bus'}
+            {fastest && (
+              <span className="ml-2 rounded-md bg-amber-400/90 px-1.5 py-px text-[9px] font-bold tracking-wide text-black uppercase">
+                Fastest
+              </span>
+            )}
           </span>
         </div>
 
@@ -264,8 +292,8 @@ export function TransferCard({ option }) {
       </ol>
 
       <p className="text-[10px] text-gray-500">
-        Not shown on the map - it spans two routes. Pick a direct bus below to track it live.
+        Both legs are drawn on the map — a transfer is two rides in two colours.
       </p>
-    </div>
+    </button>
   )
 }

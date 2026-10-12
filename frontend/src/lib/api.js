@@ -557,6 +557,11 @@ export function mapJourneyOption(entry) {
     lowFloor: Boolean(entry.low_floor),
     score: num(entry.score),
     stops: (entry.stops ?? []).map(mapJourneyStop),
+    // The leg's road polyline, already sliced between the two stops by the
+    // backend (shape_m is its length). Drawn verbatim by the map - no separate
+    // whole-route fetch that could drift from the stops listed in `stops`.
+    shape: mapJourneyShape(entry.shape),
+    shapeM: num(entry.shape_m),
 
     departsAt: entry.departs_at ?? null,
     scheduledArrival: entry.scheduled_arrival ?? null,
@@ -583,7 +588,25 @@ export function mapJourneyLeg(entry) {
     capacity: num(entry.capacity),
     wheelchair: Boolean(entry.wheelchair_accessible),
     stops: (entry.stops ?? []).map(mapJourneyStop),
+    shape: mapJourneyShape(entry.shape),
+    shapeM: num(entry.shape_m),
   }
+}
+
+/**
+ * Normalises the sliced leg polyline from the wire.
+ *
+ * The contract sends `[[lng, lat], ...]` pairs. Defensive: one malformed pair
+ * must not take the map down, so each pair is validated and dropped rather than
+ * throwing on the whole option.
+ */
+function mapJourneyShape(shape) {
+  if (!Array.isArray(shape)) return []
+  return shape
+    .filter(
+      (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]),
+    )
+    .map((p) => [Number(p[0]), Number(p[1])])
 }
 
 /**

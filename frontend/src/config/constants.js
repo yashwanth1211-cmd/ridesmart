@@ -85,6 +85,3 @@ export const MAP_STYLE = {
   },
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 }
-
-/** Journey planned on first load, matching the seed's deliberate V1 vs V2 contrast. */
-export const DEFAULT_JOURNEY = { from: 'STOP_VIT', to: 'STOP_VELLORE_OLD_BUS_STAND' }

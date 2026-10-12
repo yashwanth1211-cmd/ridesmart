@@ -30,15 +30,19 @@ function AppRoutes() {
       path: '/',
       element: (
         <Suspense fallback={<PageLoading />}>
-          <Intro />
+          <Console />
         </Suspense>
       ),
     },
     {
       path: '/app',
+      element: <Navigate to="/" replace />,
+    },
+    {
+      path: '/intro',
       element: (
         <Suspense fallback={<PageLoading />}>
-          <Console />
+          <Intro />
         </Suspense>
       ),
     },

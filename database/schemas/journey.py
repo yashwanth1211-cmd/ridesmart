@@ -76,6 +76,14 @@ class JourneyOption(BaseModel):
     from_stop_id: int | None = None
     to_stop_id: int | None = None
     stops: list[JourneyStop]
+    shape: list[list[float]] = Field(
+        default_factory=list,
+        description="Road polyline for this leg, [lng, lat] pairs, in travel order",
+    )
+    shape_m: float = Field(
+        default=0.0,
+        description="Length of the sliced shape in metres, for the shortest-leg tie-break",
+    )
     arrives_in_min: int = Field(description="Minutes until the bus reaches the origin stop")
     eta_min: int = Field(description="Minutes until the bus reaches the destination stop")
     scheduled_arrival: str | None = None
@@ -106,6 +114,14 @@ class JourneyLeg(BaseModel):
     from_stop_id: int | None = None
     to_stop_id: int | None = None
     stops: list[JourneyStop]
+    shape: list[list[float]] = Field(
+        default_factory=list,
+        description="Road polyline for this leg, [lng, lat] pairs, in travel order",
+    )
+    shape_m: float = Field(
+        default=0.0,
+        description="Length of the sliced shape in metres, for the shortest-leg tie-break",
+    )
     arrives_in_min: int
     crowd_level: str | None = None
     crowd_load: int | None = None

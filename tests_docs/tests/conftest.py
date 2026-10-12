@@ -35,7 +35,7 @@ def temp_db(tmp_path):
 
 @pytest.fixture()
 def seeded_db(temp_db):
-    """Seeded database: 3 routes, 12 stops, 4 buses, 3 active trips."""
+    """Seeded database: 3 routes, 23 stops, 10 buses, 9 active trips."""
     from simulation_ml.seed.seed import seed
 
     seed(reset=False, url=temp_db)

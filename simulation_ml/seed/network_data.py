@@ -340,29 +340,29 @@ ROUTE_SPECS: list[tuple] = [
     ),
 ]
 
-# How many buses each route number carries, and the service class. Three per
-# number over 29 numbers comes to 91 vehicles, inside the 60-100 the brief asks
-# for.
+# How many buses each route number carries, and the service class. The sum is
+# 90: with the ten OSM demo buses that is exactly 100 - the top of the brief's
+# 60-100 band.
 #
 # (route_number, bus_type, count)
 FLEET_PLAN: list[tuple[str, str, int]] = [
     ("1A", "ordinary", 4),
-    ("5", "ordinary", 4),
+    ("5", "ordinary", 3),
     ("7A", "ordinary", 3),
     ("7B", "ordinary", 3),
-    ("12", "express", 4),
-    ("21A", "ordinary", 4),
+    ("12", "express", 3),
+    ("21A", "ordinary", 3),
     ("21B", "ordinary", 3),
     ("32", "ordinary", 3),
-    ("45", "express", 4),
+    ("45", "express", 3),
     ("55", "ordinary", 3),
     ("66", "ordinary", 3),
     ("71", "ordinary", 3),
     ("83", "ordinary", 3),
     ("94", "ordinary", 3),
     ("101", "ordinary", 3),
-    ("102", "ordinary", 4),
-    ("103", "deluxe", 4),
+    ("102", "ordinary", 3),
+    ("103", "deluxe", 3),
     ("104", "deluxe", 4),
     ("105", "ordinary", 3),
     ("106", "ordinary", 3),
@@ -388,10 +388,13 @@ every result for that origin looks alike. The "least crowded" ranking then has
 nothing to reorder - not because it is broken, but because a fleet that thin
 cannot express a trade-off.
 
-So the busy city corridors get four and the sparse ones three: 96 network buses,
-which with the four hand-authored OSM demo buses is exactly 100 - the top of the
-brief's 60-100 band. Going past it was tempting for more choice and not worth
-breaking a stated constraint.
+So the flagship corridors keep four and the rest run three: 90 network buses,
+which with the ten OSM demo buses is exactly 100 - the top of the brief's 60-100
+band. Going past it was tempting for more choice and not worth breaking a stated
+constraint. The network total stays 90 because the demo fleet grows to ten buses
+(the three demo routes each run three vehicles, plus one spare): blowing past
+100 to give the network more choice would trade the brief's limit for
+planner-niceties the demo already demonstrates.
 """
 
 # Capacity and accessibility by service class. A deluxe intercity coach is

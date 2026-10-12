@@ -7,8 +7,7 @@ import {
   CloudCheck,
   Clock,
 } from '@phosphor-icons/react'
-import { DEFAULT_JOURNEY } from '@/config/constants'
-import { useJourney, useRouteShape, useRouteStops, useStops } from '@/lib/useJourney'
+import { useJourney, useStops, buildJourneyLegs } from '@/lib/useJourney'
 import { useLiveBuses } from '@/lib/useLiveBuses'
 import LiveMap from '@/components/map/LiveMap'
 import AuthorityPanel from './AuthorityPanel'
@@ -84,12 +83,16 @@ function EtaCard({ journey, buses }) {
   const { selected, plan } = journey
   const now = useNow()
   const leadingSpeed = Math.max(0, ...buses.map((b) => b.speedKmph ?? 0))
-  const arrival = selected
-    ? new Date(now + (selected.etaMin ?? 0) * 60000).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : null
+  // A transfer has no eta of its own - its arrival is the total. Reading both
+  // keeps the floating card correct for a two-leg selection.
+  const minutes = selected ? (selected.etaMin ?? selected.totalMin ?? null) : null
+  const arrival =
+    minutes == null
+      ? null
+      : new Date(now + minutes * 60000).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
 
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 w-52">
@@ -100,7 +103,7 @@ function EtaCard({ journey, buses }) {
         </p>
 
         <p className="mt-1 font-mono text-2xl leading-none font-semibold text-amber-200">
-          {selected ? `${selected.etaMin ?? '—'} min` : '—'}
+          {minutes != null ? `${minutes} min` : '—'}
         </p>
 
         <dl className="mt-2 flex flex-col gap-1 text-[11px] text-gray-300">
@@ -139,7 +142,7 @@ function EtaCard({ journey, buses }) {
  * selection state is how the map and the planner end up disagreeing about which
  * route is on screen.
  */
-function RouteSelector({ options, selected, onSelect, onClear }) {
+function RouteSelector({ options, transfers = [], selected, onSelect, onClear }) {
   /*
     Chips are per ROUTE, the planner's cards are per BUS.
 
@@ -150,6 +153,10 @@ function RouteSelector({ options, selected, onSelect, onClear }) {
     at. Collapsing to the best-ranked bus on each route keeps one chip per
     corridor while still letting the passenger drop to the exact vehicle through
     the planner card.
+
+    A transfer is a chip of its own ("21A + 22A"), because it has no single
+    route to collapse to - and with per-leg geometry it is now a real selection,
+    not a footnote.
   */
   const routes = useMemo(() => {
     const seen = new Map()
@@ -162,7 +169,7 @@ function RouteSelector({ options, selected, onSelect, onClear }) {
   return (
     <div className="absolute top-3 right-3 z-10 flex max-w-[60%] flex-wrap items-center justify-end gap-1.5">
       {routes.map((option) => {
-        const isSelected = option.routeId === selected?.routeId
+        const isSelected = option.id === selected?.id
         const count = options.filter((o) => o.routeId === option.routeId).length
         return (
           <button
@@ -187,11 +194,31 @@ function RouteSelector({ options, selected, onSelect, onClear }) {
         )
       })}
 
+      {transfers.map((option) => {
+        const isSelected = option.id === selected?.id
+        return (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onSelect(option.id)}
+            aria-pressed={isSelected}
+            title={`${option.code} — ${option.totalMin} min total`}
+            className={`glass-panel-strong rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+              isSelected
+                ? 'bg-amber-400/25 text-amber-200 ring-1 ring-amber-400/60'
+                : 'text-white/80 hover:bg-white/15'
+            }`}
+          >
+            {option.code}
+          </button>
+        )
+      })}
+
       {selected && (
         <button
           type="button"
           onClick={onClear}
-          title="Clear the selected route"
+          title="Clear the selected journey"
           className="glass-panel-strong rounded-md px-2 py-1 text-[11px] font-medium text-white/70 transition-colors hover:bg-white/15"
         >
           Clear
@@ -201,8 +228,8 @@ function RouteSelector({ options, selected, onSelect, onClear }) {
   )
 }
 
-function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, transport, error, query }) {
-  const { plan, options, selected, selectOption, clearSelection, source } = journey
+function MapView({ buses, legs, journey, transport, error, query }) {
+  const { plan, options, transfers, selected, selectOption, clearSelection, source } = journey
   const [focusedBusId, setFocusedBusId] = useState(null)
 
   const focused = buses.find((b) => b.busId === focusedBusId) ?? null
@@ -223,13 +250,11 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="glass-warm relative overflow-hidden p-1">
         <LiveMap
+          legs={legs}
           buses={buses}
-          routeStops={routeStops}
-          routeShape={routeShape}
           origin={plan.origin}
           destination={plan.destination}
-          selectedRouteId={selectedRouteId}
-          selectedRouteCode={selected?.code ?? null}
+          fastest={journey.selectedIsFastest}
           onSelectBus={setFocusedBusId}
           className="h-full min-h-[320px] rounded-lg"
         />
@@ -237,6 +262,7 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
         <EtaCard journey={journey} buses={buses} />
         <RouteSelector
           options={options}
+          transfers={transfers}
           selected={selected}
           onSelect={selectOption}
           onClear={clearSelection}
@@ -255,15 +281,15 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
               {/*
                 Three different empty states, and conflating them is how a dead
                 feed ends up looking like a filter that matched nothing. No
-                selection is not an outage, and a route with no service is not
-                an outage either.
+                journey is not an outage, and routes with no service are not an
+                outage either.
               */}
-              {selectedRouteId == null
-                ? 'No route selected. Pick one to show it on the map.'
+              {legs.length === 0
+                ? 'No journey selected. Pick From and To to show it on the map.'
                 : buses.length === 0
                   ? `No buses running on ${selected?.code ?? 'this route'} right now.`
                   : 'No buses match your search.'}
-              {selectedRouteId != null && buses.length === 0 && error == null && (
+              {legs.length > 0 && buses.length === 0 && error == null && (
                 <code className="mt-1 block text-[11px] text-gray-500">
                   python -m simulation_ml.simulate --speed 5 --interval 2
                 </code>
@@ -353,7 +379,7 @@ function MapView({ buses, journey, routeStops, routeShape, selectedRouteId, tran
             </p>
             {selected && (
               <p className="text-[11px] text-gray-400">
-                Showing route {selected.code} on the map · {selected.etaMin ?? '—'} min
+                Showing {selected.code} on the map · {selected.etaMin ?? selected.totalMin ?? '—'} min
               </p>
             )}
           </section>
@@ -402,8 +428,8 @@ export default function Dashboard() {
   const [view, setView] = useState('map')
   const [query, setQuery] = useState('')
 
-  const [from, setFrom] = useState(DEFAULT_JOURNEY.from)
-  const [to, setTo] = useState(DEFAULT_JOURNEY.to)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [accessibilityOnly, setAccessibilityOnly] = useState(false)
   const [sort, setSort] = useState('eta')
 
@@ -435,28 +461,27 @@ export default function Dashboard() {
   })
 
   /*
-    The one selected route, or null when nothing is selected.
-
-    Every map layer, every live fetch and every geometry request keys off this
-    value. It is deliberately the ONLY route id in the tree: the bug this fixed
-    was a live feed scoped to the whole network while the map assumed one route,
-    so the scope has to have a single source of truth rather than being
-    re-derived per consumer.
+    The map draws the selected option AS LEGS: one slice of road for a direct
+    bus, two coloured slices for a transfer. Building the legs here - from the
+    selected option and the reference stop list - keeps a single source for what
+    every map layer paints. No option selected means zero legs, which is exactly
+    how the map shows nothing until a journey is actually chosen.
   */
-  const selectedRouteId = journey.selectedRouteId
+  const legs = useMemo(
+    () => buildJourneyLegs(journey.selected, stops),
+    [journey.selected, stops],
+  )
 
-  // Scoped to the selected route. Passing the id here is what stops the map
+  /*
+    The routes the selected legs run on. useLiveBuses opens one subscription per
+    route, so a transfer draws buses from BOTH legs - never a bus from a route
+    the passenger is not travelling on.
+  */
+  const legRouteIds = useMemo(() => [...new Set(legs.map((l) => l.routeId))], [legs])
+
+  // Scoped to the selected legs. Passing the route ids here is what stops the map
   // receiving - and drawing - buses belonging to routes the user did not pick.
-  const { buses, transport, error: busError } = useLiveBuses(selectedRouteId)
-
-  const routeStops = useRouteStops(selectedRouteId, {
-    fromId: journey.plan.origin?.id,
-    toId: journey.plan.destination?.id,
-  })
-
-  // Real road geometry for the selected route. The map draws this instead of
-  // joining stop coordinates, which would cut straight across the city.
-  const routeShape = useRouteShape(selectedRouteId)
+  const { buses, transport, error: busError } = useLiveBuses(legRouteIds)
 
   return (
     <div className="relative flex h-full min-h-0 flex-col gap-3 p-3 md:p-4">
@@ -542,10 +567,8 @@ export default function Dashboard() {
           {view === 'map' && (
             <MapView
               buses={buses}
+              legs={legs}
               journey={journey}
-              routeStops={routeStops}
-              routeShape={routeShape}
-              selectedRouteId={selectedRouteId}
               transport={transport}
               error={busError}
               query={query}

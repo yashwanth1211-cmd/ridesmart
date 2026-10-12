@@ -61,6 +61,7 @@ from simulation_ml.db.models import (
     Crowd,
     Location,
     Route,
+    RouteShapePoint,
     RouteStop,
     SegmentStat,
     ServicePattern,
@@ -425,6 +426,12 @@ def bus_options_for_route(
     cumulative = _cumulative_distance(db, route_id)
     total_m = cumulative[-1] if cumulative else 0.0
 
+    # One slice for every bus on this route: the geometry between the two stops
+    # does not depend on which trip answers the call.
+    leg_shape, leg_metres = _route_leg_geometry(
+        db, cumulative, route_id, from_seq, to_seq
+    )
+
     # ---- buses running right now ---------------------------------------
     trips = db.query(Trip).filter(Trip.route_id == route_id, Trip.status == "active").all()
     mps = _observed_speed_mps(db, route_id)
@@ -480,6 +487,8 @@ def bus_options_for_route(
                 "from_seq": from_seq,
                 "to_seq": to_seq,
                 "stops": leg_stops,
+                "shape": leg_shape,
+                "shape_m": round(leg_metres, 1),
                 # `arrives_in_min` is how long until the bus REACHES THE
                 # BOARDING POINT - that is what a passenger standing at the stop
                 # is waiting on, so it is what the ranking uses. `eta_min` is the
@@ -534,6 +543,8 @@ def bus_options_for_route(
                     to_seq,
                     onboard_min=max(0, round((depart_at - now).total_seconds() / 60)),
                 ),
+                "shape": leg_shape,
+                "shape_m": round(leg_metres, 1),
                 "arrives_in_min": max(0, round((depart_at - now).total_seconds() / 60)),
                 "eta_min": max(0, round((depart_at - now).total_seconds() / 60))
                 + on_leg_min,
@@ -581,6 +592,50 @@ def _distance_at(cumulative: list[float], seq: int) -> float:
         return 0.0
     idx = max(0, min(seq, len(cumulative) - 1))
     return cumulative[idx]
+
+
+def _route_leg_geometry(
+    db: Session,
+    cumulative: list[float],
+    route_id: int,
+    from_seq: int,
+    to_seq: int,
+) -> tuple[list[list[float]], float]:
+    """The route's road polyline sliced to one leg, as [lng, lat] points.
+
+    The journey map is scoped to exactly the two stops the passenger travels
+    between, so it needs the SAME slice of the shape that `stops_between`
+    produces in stop space. Both slices come from the same two cumulative
+    distances, which is what keeps the drawn line and the drawn stops in
+    agreement: a slice by stop id would silently skip the shape any time the
+    route shape and the stop list disagreed.
+
+    RouteShapePoint is ordered by (leg, seq) and `cum_m` is non-decreasing in
+    that order, so filtering on the metre range between the two stops and
+    ordering by (leg, seq) returns exactly the vertices inside the leg, from
+    the boarding stop's vertex through the destination's.
+    """
+    start_m = _distance_at(cumulative, from_seq)
+    end_m = _distance_at(cumulative, to_seq)
+
+    rows = (
+        db.query(RouteShapePoint)
+        .filter(
+            RouteShapePoint.route_id == route_id,
+            RouteShapePoint.cum_m >= start_m,
+            RouteShapePoint.cum_m <= end_m,
+        )
+        .order_by(RouteShapePoint.leg, RouteShapePoint.seq)
+        .all()
+    )
+
+    # MapLibre works in [lng, lat], the reverse of the [lat, lng] convention the
+    # rest of the codebase uses - see the note on MAP_DEFAULTS in constants.js.
+    points = [[p.lon, p.lat] for p in rows]
+
+    # A leg between two adjacent stops overlaps at the shared vertex; the metre
+    # span is still the distance the passenger rides, so that is what is reported.
+    return points, max(0.0, end_m - start_m)
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +762,8 @@ def _leg_payload(option: dict) -> dict:
         "wheelchair_accessible": option["wheelchair_accessible"],
         "low_floor": option["low_floor"],
         "stops": option["stops"],
+        "shape": option.get("shape") or [],
+        "shape_m": option.get("shape_m") or 0.0,
         "from_stop_id": option["stops"][0]["stop_id"] if option["stops"] else None,
         "to_stop_id": option["stops"][-1]["stop_id"] if option["stops"] else None,
         "arrives_in_min": option["arrives_in_min"],
@@ -854,4 +911,6 @@ def _option_payload(option: dict) -> dict:
         "journey_min": option["journey_min"],
         "score": option.get("score"),
         "departs_at": option.get("departs_at"),
+        "shape": option.get("shape") or [],
+        "shape_m": option.get("shape_m") or 0.0,
     }

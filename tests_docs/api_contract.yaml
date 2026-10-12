@@ -731,6 +731,26 @@ components:
             boarding point, not from the route's first stop - otherwise the first
             entry reads as an hour away for a bus already at the kerb.
           items: { $ref: "#/components/schemas/JourneyStop" }
+        shape:
+          type: array
+          description: >
+            The route's road polyline sliced to this leg, as [lng, lat] pairs in
+            travel order, from the boarding stop's vertex through the
+            destination's. What the map draws - no round trip to a whole-route
+            shape endpoint, and no step where stop-space and shape-space can
+            drift apart.
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: { type: number }
+        shape_m:
+          type: number
+          description: >
+            Length of `shape` in metres, from the same cumulative slice. The
+            map's "fastest" tie-breaker: when two options arrive together the
+            shorter ride is preferred.
+          example: 15230.4
 
     JourneyStop:
       type: object
@@ -753,10 +773,10 @@ components:
         and capped at a 40-minute wait so a "connection" is not really a wait for
         something else entirely.
 
-        Note for the UI: these are not selectable. The map is scoped to exactly
-        one route - that invariant is what stops a bus from an unselected route
-        being drawn on it - and a transfer spans two. Showing one leg while
-        implying both would be a lie; breaking the scoping would break the map.
+        These ARE selectable, like a direct option. Selecting one scopes the map
+        to BOTH legs - each drawn in its own colour with its own `shape`, its own
+        stops and its own buses - so a transfer can never be implied while only
+        half of it is on screen.
       required: [legs, total_min, wait_min, transfers]
       properties:
         transfers: { type: integer, example: 1 }
@@ -801,6 +821,20 @@ components:
         stops:
           type: array
           items: { $ref: "#/components/schemas/JourneyStop" }
+        shape:
+          type: array
+          description: >
+            This leg's sliced road polyline from `stops[0]` to the transfer stop,
+            as [lng, lat] pairs in travel order.
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: { type: number }
+        shape_m:
+          type: number
+          description: Length of this leg's `shape` in metres.
+          example: 8120.7
 
     StopEta:
       type: object

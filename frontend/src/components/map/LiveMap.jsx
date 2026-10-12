@@ -29,8 +29,8 @@ setWorkerUrl(MapLibreWorker)
 import { CROWD_LEVELS, MAP_DEFAULTS, MAP_STYLE } from '@/config/constants'
 
 /**
- * Live map of bus positions, drawn with MapLibre GL as the README's tech stack
- * requires.
+ * Live map of the selected journey's legs, drawn with MapLibre GL as the
+ * README's tech stack requires.
  *
  * Design notes:
  *  - The map instance is created once and NEVER re-created. Re-creating it on a
@@ -41,18 +41,21 @@ import { CROWD_LEVELS, MAP_DEFAULTS, MAP_STYLE } from '@/config/constants'
  *    update intervals with a handful of buses either is fine, but a symbol
  *    layer keeps hundreds of vehicles cheap and avoids React reconciliation on
  *    the map subtree entirely.
- *  - The route polyline comes from useRouteShape (real OSRM road geometry), not
- *    from PlanOption.stops, which carries no coordinates. Stop MARKERS come
- *    from useRouteStops and are drawn as their own GeoJSON source.
+ *  - The road polylines are the SLICED shapes the journey payload carries
+ *    (buildJourneyLegs), one per leg, so what is drawn is exactly the road the
+ *    selected option drives between the two stops - no whole-route fetch, and
+ *    no step where the drawn line and the listed stops can drift apart.
  *
- * SCOPE. Every layer here draws ONE route or nothing at all. There is exactly
- * one 'route' source, one 'stops' source and one 'buses' source, each replaced
- * wholesale through setData(), so a previous selection cannot survive the next
- * one. With selectedRouteId null the map is emptied: no polyline, no stops, no
- * buses. Do not add a layer that ignores selectedRouteId - an earlier version
- * of this file drew the whole network because selection was only ever applied
- * as a paint filter (a highlight halo), which changed how a bus looked without
- * ever removing one.
+ * SCOPE. The map draws exactly the selected journey's legs, or nothing. There
+ * is one 'route' source (one LineString per leg, coloured per leg), one 'stops'
+ * source (each leg's stops, same colours) and one 'buses' source (only buses on
+ * the leg routes, tinted by their leg). Each source is replaced wholesale
+ * through setData(), so a previous selection cannot survive the next one. With
+ * zero legs the map is emptied: no polyline, no stops, no buses, no endpoints.
+ * Do not add a layer that ignores the legs - an earlier version of this file
+ * drew the whole network because selection was only ever applied as a paint
+ * filter (a highlight halo), which changed how a bus looked without ever
+ * removing one.
  */
 
 const EMPTY = { type: 'FeatureCollection', features: [] }
@@ -70,14 +73,20 @@ function toCollection(items, map) {
   }
 }
 
+/** The coordinates to draw a leg with: its sliced shape, or its stops' joins. */
+function legCoords(leg) {
+  if (Array.isArray(leg.shape) && leg.shape.length >= 2) {
+    return leg.shape.filter((p) => Array.isArray(p) && p.length >= 2)
+  }
+  return (leg.stops ?? []).map((s) => [s.lon, s.lat])
+}
+
 export default function LiveMap({
+  legs = [],
   buses = [],
-  routeStops = [],
-  routeShape = [],
   origin = null,
   destination = null,
-  selectedRouteId = null,
-  selectedRouteCode = null,
+  fastest = false,
   onSelectBus = null,
   className = '',
 }) {
@@ -86,16 +95,14 @@ export default function LiveMap({
   const readyRef = useRef(false)
   const latest = useRef({})
   const popupRef = useRef(null)
-  const fittedRouteRef = useRef('')
+  const fittedLegsRef = useRef('')
 
   latest.current = {
+    legs,
     buses,
-    routeStops,
-    routeShape,
     origin,
     destination,
-    selectedRouteId,
-    selectedRouteCode,
+    fastest,
     onSelectBus,
   }
 
@@ -105,28 +112,22 @@ export default function LiveMap({
     if (!map || !readyRef.current) return
 
     const {
+      legs: currentLegs,
       buses: allBuses,
-      routeStops: rs,
-      routeShape: shape,
       origin: o,
       destination: d,
-      selectedRouteId: routeId,
-      selectedRouteCode: code,
       onSelectBus: cb,
     } = latest.current
 
-    /*
-      NOTHING is drawn without a selection, and only the selected route's buses
-      are drawn once there is one.
+    // Only buses on the legs' routes can be drawn. useLiveBuses already scopes
+    // its fetch to those routes, so this filter should never remove anything.
+    // It stays because it is the last line of defence between a prop and the
+    // map: a future caller passing a fleet-wide array cannot regress that.
+    const legRouteIds = currentLegs.map((l) => l.routeId)
+    const colorByRoute = new Map(currentLegs.map((l) => [l.routeId, l.color]))
+    const keyedBusIds = new Set(currentLegs.flatMap((l) => l.busIds ?? []))
 
-      useLiveBuses already scopes its fetch to routeId, so this filter should
-      never remove anything. It stays because it is the last line of defence
-      between a prop and the map: the previous version of this file had no such
-      guard and relied purely on the feed being unfiltered-but-visually-dimmed,
-      which is why selecting a route still drew the whole network. A future
-      caller passing a fleet-wide array cannot regress that.
-    */
-    const b = routeId == null ? [] : allBuses.filter((x) => x.routeId === routeId)
+    const b = currentLegs.length === 0 ? [] : allBuses.filter((x) => legRouteIds.includes(x.routeId))
 
     const busGeo = toCollection(b, (x) => ({
       busId: x.busId,
@@ -141,85 +142,75 @@ export default function LiveMap({
       capacity: x.capacity,
       speed: Math.round(x.speedKmph ?? 0),
       nextStop: x.nextStopName ?? '',
+      // Tint the marker by which leg its route belongs to, and single out the
+      // offered vehicle (the option's own bus) with a stronger ring.
+      color: colorByRoute.get(x.routeId) ?? '#4f8cff',
+      keyed: keyedBusIds.has(x.busId),
     }))
 
-    // Draw the REAL road polyline, not a line through the stop coordinates.
-    // Stop markers still come from routeStops, but the path between them comes
-    // from OSRM geometry so the line on screen is the road the bus drives.
-    // Falls back to joining the stops if geometry is missing.
-    const shapeCoords =
-      routeId == null
-        ? []
-        : shape
-            .filter((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat))
-            .map((p) => [p.lon, p.lat])
+    // One LineString per leg, each carrying its own colour in the properties so
+    // a transfer draws as two visibly distinct roads on one source.
+    const routeFeatures = currentLegs
+      .map((leg) => {
+        const coords = legCoords(leg)
+        return coords.length < 2
+          ? null
+          : {
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: coords },
+              properties: { color: leg.color, code: leg.code },
+            }
+      })
+      .filter(Boolean)
 
-    const stopCoords =
-      routeId == null
-        ? []
-        : rs
-            .filter((s) => Number.isFinite(s.lon) && Number.isFinite(s.lat))
-            .map((s) => [s.lon, s.lat])
-
-    const coords = shapeCoords.length >= 2 ? shapeCoords : stopCoords
+    // Each leg's stops as their own markers, coloured to match the leg they
+    // belong to, so the interchange of a transfer is visibly shared.
+    const stopItems = currentLegs.flatMap((leg) =>
+      (leg.stops ?? []).map((s) => ({ ...s, color: leg.color, legCode: leg.code })),
+    )
 
     map.getSource('buses')?.setData(busGeo)
     map.getSource('route')?.setData(
-      coords.length < 2
-        ? EMPTY
-        : {
-            type: 'FeatureCollection',
-            features: [
-              { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} },
-            ],
-          },
+      routeFeatures.length
+        ? { type: 'FeatureCollection', features: routeFeatures }
+        : EMPTY,
     )
+    map.getSource('stops')?.setData(toCollection(stopItems, (s) => ({
+      stopId: s.stopId ?? null,
+      name: s.name ?? '',
+      legCode: s.legCode ?? '',
+      color: s.color ?? '#4f8cff',
+    })))
 
-    // Stop markers for the selected route only. This source did not exist
-    // before: routeStops fed only the polyline fallback, so the map showed no
-    // stops at all. One source, replaced wholesale by setData, so switching
-    // routes cannot leave the previous route's stops behind.
-    map.getSource('stops')?.setData(
-      toCollection(routeId == null ? [] : rs, (s) => ({
-        routeId,
-        stopId: s.id ?? null,
-        name: s.name ?? '',
-        accessible: Boolean(s.accessible),
+    // Endpoints belong to the journey, not the route, so they follow
+    // plan.origin/plan.destination. With no legs there is no journey worth
+    // marking.
+    map.getSource('endpoints')?.setData(
+      toCollection(currentLegs.length === 0 ? [] : [o, d].filter(Boolean), (s, index) => ({
+        // origin first, destination second - the same order the array arrives in.
+        kind: index === 0 ? 'origin' : 'destination',
       })),
     )
 
-    // Frame the route the moment its coordinates resolve - on the very first
-    // mount routeStops usually arrive AFTER the map's 'load' event, so an
-    // early fitBounds here would be skipped and the map would sit on the
-    // generic default viewport until the view happened to remount.
-    //
-    // Keyed on routeId, NOT on a coordinate signature. A signature cannot
-    // distinguish "the user picked a different route" from "this route has no
-    // geometry yet", so selecting a route whose data had not resolved left the
-    // viewport fitted to the previous route. The routeId also has to be reset
-    // when the selection is cleared, or re-picking the same route later would
-    // match the stale ref and skip the refit entirely.
-    if (routeId == null) {
-      fittedRouteRef.current = ''
-    } else if (coords.length > 1 && fittedRouteRef.current !== String(routeId)) {
-      fittedRouteRef.current = String(routeId)
+    // Frame the journey the moment its legs resolve. Keyed on the leg id set,
+    // NOT on a coordinate signature: the geometry arrives WITH the selection in
+    // the journey payload, so a signature cannot distinguish "the user picked a
+    // different journey" from "this journey has no geometry yet" - that split
+    // only existed when the shape was fetched separately. Clearing the legs
+    // resets the key, or re-picking the same journey later would skip the refit.
+    const fitCoords = currentLegs.flatMap((leg) => legCoords(leg))
+    const legSignature = currentLegs.length ? currentLegs.map((l) => l.routeId).join('|') : ''
+
+    if (currentLegs.length === 0) {
+      fittedLegsRef.current = ''
+    } else if (fitCoords.length > 1 && fittedLegsRef.current !== legSignature) {
+      fittedLegsRef.current = legSignature
       const bounds = new LngLatBounds()
-      coords.forEach((c) => bounds.extend(c))
+      // Prevent an empty bounds object when every leg somehow lacks points.
+      fitCoords.slice(0, 2).forEach((c) => bounds.extend(c))
+      fitCoords.forEach((c) => bounds.extend(c))
       map.fitBounds(bounds, { padding: 90, maxZoom: 15, duration: 900 })
     }
-
-    // Endpoints belong to the journey, not the route, so they follow
-    // plan.origin/plan.destination. With no route selected there is no journey
-    // worth marking.
-    map
-      .getSource('endpoints')
-      ?.setData(toCollection(routeId == null ? [] : [o, d].filter(Boolean), (s) => ({ code: s.code })))
-
-    // The selected route's vehicles get a halo so the passenger can pick their
-    // own bus out of the traffic. With no selection both filters hide
-    // everything, which is what empties the map.
-    map.setFilter('bus-halo', ['==', ['get', 'routeCode'], code ?? '__none__'])
-    map.setFilter('bus-points', ['!=', ['get', 'routeCode'], '__none__'])
 
     if (cb) {
       map.__onSelectBus = cb
@@ -242,6 +233,7 @@ export default function LiveMap({
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
 
     map.on('load', () => {
+      // Route legs: dark casing under a per-leg coloured line.
       map.addSource('route', { type: 'geojson', data: EMPTY })
       map.addLayer({
         id: 'route-casing',
@@ -253,12 +245,13 @@ export default function LiveMap({
         id: 'route-line',
         type: 'line',
         source: 'route',
-        paint: { 'line-color': '#4f8cff', 'line-width': 3.5, 'line-opacity': 0.95 },
+        // Each feature carries its leg's colour, so a transfer is two clearly
+        // distinct roads from one source.
+        paint: { 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-opacity': 0.95 },
       })
 
-      // Stops for the selected route. Added below the line layers so a marker
-      // always sits on top of the road it belongs to, and above the bus layer
-      // being added next so a vehicle is never hidden behind its own stop.
+      // Each leg's stops, tinted to match. Above the line layers so a marker
+      // always sits on top of the road it belongs to.
       map.addSource('stops', { type: 'geojson', data: EMPTY })
       map.addLayer({
         id: 'stop-halo',
@@ -267,30 +260,44 @@ export default function LiveMap({
         paint: {
           'circle-radius': 7,
           'circle-color': '#0b1020',
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#e6ecff',
+          'circle-stroke-width': 3,
+          'circle-stroke-color': ['get', 'color'],
         },
       })
 
+      // Leg buses. The halo tints every vehicle by its leg's colour; the bus
+      // that answers the option gets a tighter white ring on top, so the
+      // passenger can pick their ride out of the other buses on that road.
       map.addSource('buses', { type: 'geojson', data: EMPTY })
       map.addLayer({
         id: 'bus-halo',
         type: 'circle',
         source: 'buses',
-        filter: ['==', ['get', 'routeCode'], '__none__'],
         paint: {
           'circle-radius': 13,
-          'circle-color': '#4f8cff',
+          'circle-color': ['get', 'color'],
           'circle-opacity': 0.22,
           'circle-stroke-width': 1,
-          'circle-stroke-color': '#4f8cff',
+          'circle-stroke-color': ['get', 'color'],
+        },
+      })
+      map.addLayer({
+        id: 'bus-key',
+        type: 'circle',
+        source: 'buses',
+        filter: ['==', ['get', 'keyed'], true],
+        paint: {
+          'circle-radius': 10,
+          'circle-color': '#ffffff',
+          'circle-opacity': 0.95,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': ['get', 'color'],
         },
       })
       map.addLayer({
         id: 'bus-points',
         type: 'circle',
         source: 'buses',
-        filter: ['!=', ['get', 'routeCode'], '__none__'],
         paint: {
           'circle-radius': 6,
           'circle-color': [
@@ -313,7 +320,9 @@ export default function LiveMap({
         type: 'symbol',
         source: 'buses',
         layout: {
-          'text-field': ['get', 'routeCode'],
+          // The bus's own name - "Bus 5" - rather than its route, because that
+          // is the reference a passenger reads on the marker.
+          'text-field': ['get', 'name'],
           'text-size': 11,
           'text-offset': [0, 1.5],
           'text-anchor': 'top',
@@ -331,7 +340,15 @@ export default function LiveMap({
         source: 'endpoints',
         paint: {
           'circle-radius': 7,
-          'circle-color': ['match', ['get', 'code'], 'STOP_VIT', '#4f8cff', '#ff5a5f'],
+          'circle-color': [
+            'match',
+            ['get', 'kind'],
+            'origin',
+            '#4f8cff',
+            'destination',
+            '#ff5a5f',
+            '#4f8cff',
+          ],
           'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
         },
@@ -420,14 +437,22 @@ export default function LiveMap({
     sync()
   })
 
+  const busCountText = `${buses.length} bus${buses.length === 1 ? '' : 'es'}`
+  const legLabel = legs.map((l) => l.code).join(' + ')
+
   return (
     <div className={`relative overflow-hidden ${className}`}>
       <div ref={containerRef} className="h-full w-full" />
-      <p className="pointer-events-none absolute right-2 bottom-2 rounded bg-black/40 px-1.5 py-0.5 text-[10px] text-gray-400">
-        {selectedRouteId == null
-          ? 'No route selected'
-          : `${buses.length} bus${buses.length === 1 ? '' : 'es'} on ${selectedRouteCode ?? 'route'}`}
+      <p className="pointer-events-none absolute right-2 bottom-3 rounded bg-black/40 px-1.5 py-0.5 text-[10px] text-gray-400">
+        {legs.length === 0
+          ? 'Map empty — pick a journey to plan one'
+          : `${busCountText} on ${legLabel}`}
       </p>
+      {fastest && legs.length > 0 && (
+        <span className="pointer-events-none absolute right-2 bottom-8 z-10 rounded-md bg-amber-400/90 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-black uppercase">
+          Fastest
+        </span>
+      )}
     </div>
   )
 }

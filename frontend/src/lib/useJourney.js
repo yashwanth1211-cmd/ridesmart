@@ -10,12 +10,90 @@ import {
 } from '@/lib/api'
 
 /**
- * The demo journey, matching the backend's seed data.
- * simulation_ml/seed/seed.py is built around exactly this pair: V1 is the
- * fast-but-packed option and V2 the slow-but-empty one, and the seed docstring
- * says "Plan STOP_VIT -> STOP_VELLORE_OLD_BUS_STAND and you get three options."
+ * A plan with nothing in it: no origin, no destination, no rows.
+ *
+ * The journey starts EMPTY on purpose - the map is scoped to a chosen journey,
+ * so before From and To are picked there is nothing to draw and nothing to show.
+ * This is the stable object useJourney falls back to whenever the query has no
+ * stop pair, so clearing the pickers clears the plan, the selection and the map
+ * in one render. It is a module constant so the same reference can be set over
+ * and over without re-rendering.
  */
-export const DEFAULT_JOURNEY = { from: 'STOP_VIT', to: 'STOP_VELLORE_OLD_BUS_STAND' }
+export const EMPTY_JOURNEY = {
+  origin: null,
+  destination: null,
+  generatedAt: null,
+  sort: 'eta',
+  options: [],
+  transfers: [],
+  message: null,
+}
+
+/**
+ * Colours the two legs of a journey are drawn in, shared by the map (paint
+ * layers) and the cards (leg chips) so neither can drift from the other.
+ */
+export const JOURNEY_LEG_COLORS = ['#4f8cff', '#7ae0a1']
+
+/**
+ * The stops of one leg, joined with the coordinates the journey payload does
+ * not carry. JourneyStop is { stop_id, name, eta_min, accessible } - no lat/lon -
+ * so the map can only draw a stop marker by matching it against the reference
+ * stop list. Stops without a match are dropped rather than drawn at [0, 0].
+ */
+function legStopsWithCoords(legStops, stopsByCode) {
+  const byId = stopsByCode
+  return (legStops ?? [])
+    .map((s) => {
+      const stop = byId[s.stopId]
+      return stop ? { ...s, lat: stop.lat, lon: stop.lon, stopCode: stop.code } : null
+    })
+    .filter((s) => s && Number.isFinite(s.lat) && Number.isFinite(s.lon))
+}
+
+/**
+ * The set of legs the map should draw for a selected option or transfer.
+ *
+ * A direct option is one blue leg on its own route. A transfer is two legs,
+ * first blue, second green, each with its own slice of road, its own stops and
+ * its own offered vehicle. This is the shape every map layer reads, so the
+ * "two legs in two colours" rule lives here and nowhere else.
+ */
+export function buildJourneyLegs(selected, stops = []) {
+  if (!selected) return []
+
+  const stopsByCode = new Map(stops.map((s) => [s.id, s]))
+
+  if (Array.isArray(selected.legs)) {
+    return selected.legs.map((leg, i) => ({
+      routeId: leg.routeId,
+      code: leg.code,
+      name: leg.name,
+      color: JOURNEY_LEG_COLORS[i % JOURNEY_LEG_COLORS.length],
+      shape: leg.shape ?? [],
+      shapeM: leg.shapeM ?? null,
+      stops: legStopsWithCoords(leg.stops, stopsByCode),
+      // The vehicle that answers this leg, so the map can pick it out of the
+      // route's other buses.
+      busIds: leg.busId != null ? [leg.busId] : [],
+      via: i > 0,
+    }))
+  }
+
+  return [
+    {
+      routeId: selected.routeId,
+      code: selected.code,
+      name: selected.name,
+      color: JOURNEY_LEG_COLORS[0],
+      shape: selected.shape ?? [],
+      shapeM: selected.shapeM ?? null,
+      stops: legStopsWithCoords(selected.stops, stopsByCode),
+      busIds: selected.busId != null ? [selected.busId] : [],
+      via: false,
+    },
+  ]
+}
 
 /**
  * Stops for the from/to pickers. Fetched once - the stop list is reference
@@ -53,6 +131,31 @@ export function useStops() {
 }
 
 /**
+ * The fastest selection rule, applied everywhere "the default" is needed:
+ * pick the option with the lowest arrival time, breaking ties by the shorter
+ * ride (shape_m is exact road distance, stops[] has no length). The backend
+ * ranks by ETA already, but the tie-break is a client-side rule the backend
+ * does not encode.
+ */
+function fastestOptionId(options) {
+  if (!options.length) return null
+  const [best] = [...options].sort(
+    (a, b) =>
+      (a.etaMin ?? Infinity) - (b.etaMin ?? Infinity) ||
+      (a.shapeM ?? Infinity) - (b.shapeM ?? Infinity),
+  )
+  return best.id
+}
+
+function fastestTransferIdOf(transfers) {
+  if (!transfers.length) return null
+  const [best] = [...transfers].sort(
+    (a, b) => (a.totalMin ?? Infinity) - (b.totalMin ?? Infinity),
+  )
+  return best.id
+}
+
+/**
  * Plans a journey and keeps the result fresh.
  *
  * Talks to GET /api/journey, so it needs stop IDs and the answers are BUSES
@@ -79,8 +182,8 @@ export function useJourney({
   sort = 'eta',
   includeTransfers = true,
   pollIntervalMs = config.pollIntervalMs,
-} = DEFAULT_JOURNEY) {
-  const [plan, setPlan] = useState(() => demoJourney())
+} = {}) {
+  const [plan, setPlan] = useState(EMPTY_JOURNEY)
   const [source, setSource] = useState('pending')
   const [error, setError] = useState(null)
   const [settledKey, setSettledKey] = useState(null)
@@ -115,12 +218,25 @@ export function useJourney({
     async ({ signal } = {}) => {
       const id = ++requestId.current
 
-      // The stop list has not arrived yet. Requesting now would send
-      // from_stop_id=undefined, which the backend correctly rejects with a 404 -
-      // and that rejection would then be rendered as "unknown stop" the instant
-      // the panel mounts. Waiting is not politeness here, it is the difference
-      // between a loading state and a false error.
+      // No stop pair means nothing to plan for - and the map is scoped to the
+      // chosen journey, so clearing From or To must clear the plan, the source
+      // label and the selection in one go. `EMPTY_JOURNEY` is a module constant,
+      // so re-setting it on every poll tick is a no-op render-wise. The stop
+      // list arriving late is handled the same way: querying before it lands
+      // would send from_stop_id=undefined, which the backend correctly rejects
+      // with a 404 - and that 404 would be rendered as "unknown stop" the
+      // instant the panel mounts.
       if (!fromStopId || !toStopId) {
+        setPlan(EMPTY_JOURNEY)
+        setSource('pending')
+        setSelectedId(null)
+        // An empty picker pair is "no journey requested", NOT "the user cleared
+        // it". Boot - stops not picked yet - also lands here, and latching
+        // `cleared` here would permanently suppress the default-selection below
+        // the first time both pickers are ever filled: the map would stay empty
+        // forever. Only clearSelection() (the X on the route selector) is a
+        // deliberate clear.
+        clearedRef.current = false
         setSettledKey(queryKey)
         return
       }
@@ -137,10 +253,16 @@ export function useJourney({
         setSettledKey(queryKey)
         // A deliberate clear survives re-planning; only a stale pointer (the
         // bus dropped out of the new plan) falls back to the best option.
+        // "Best" is the FASTEST option - the default must be the one that gets
+        // the passenger there soonest, with the shortest ride breaking ties.
         if (clearedRef.current) return
-        setSelectedId((current) =>
-          next.options.some((o) => o.id === current) ? current : (next.options[0]?.id ?? null),
-        )
+        setSelectedId((current) => {
+          if (next.options.some((o) => o.id === current)) return current
+          // The module-level helpers, not the memos: `load` runs before the
+          // memos below are initialised, so capturing them here would reference
+          // a binding during its own initialisation.
+          return fastestOptionId(next.options) ?? fastestTransferIdOf(next.transfers)
+        })
       } catch (err) {
         if (signal?.aborted || err?.name === 'AbortError') return
         if (id !== requestId.current) return
@@ -217,6 +339,18 @@ export function useJourney({
     [load],
   )
 
+  /**
+   * The FASTEST direct option: lowest eta, ties broken by the shorter ride.
+   * The map and the cards mark this option, and it is the default selection.
+   */
+  const fastestId = useMemo(() => fastestOptionId(plan.options), [plan.options])
+
+  /**
+   * The FASTEST transfer, by total journey minutes. Marked the same way so the
+   * carrier card for a transfer-only journey also has a "fastest" callout.
+   */
+  const fastestTransferId = useMemo(() => fastestTransferIdOf(plan.transfers), [plan.transfers])
+
   const selected = useMemo(() => {
     /*
       `selectedId === null` means the user explicitly cleared the selection, and
@@ -224,13 +358,21 @@ export function useJourney({
       "nothing selected" state unreachable, which is why the map always had some
       route to draw and the empty case could never be exercised.
 
-      A non-null id that no longer matches any option (the bus dropped out of
-      the plan after a re-plan) still falls back to the best option, because
-      that is a stale pointer rather than a deliberate choice.
+      A non-null id that matches nothing - the bus dropped out of the plan after
+      a re-plan, or an id selected while it was a transfer that is now a direct
+      option - still falls back to the best option, because that is a stale
+      pointer rather than a deliberate choice. Transfers are selectable too, so
+      the lookup searches both lists.
     */
     if (selectedId === null) return null
-    return plan.options.find((o) => o.id === selectedId) ?? plan.options[0] ?? null
-  }, [plan, selectedId])
+    return (
+      plan.options.find((o) => o.id === selectedId) ??
+      plan.transfers.find((t) => t.id === selectedId) ??
+      plan.options.find((o) => o.id === fastestId) ??
+      plan.transfers.find((t) => t.id === fastestTransferId) ??
+      null
+    )
+  }, [plan, selectedId, fastestId, fastestTransferId])
 
   return {
     plan,
@@ -240,6 +382,13 @@ export function useJourney({
     message: plan.message ?? null,
     sort: plan.sort ?? 'eta',
     selected,
+    /** The fastest direct option's id, for the FASTEST callout on card and map. */
+    fastestId,
+    /** The fastest transfer's id, so a transfer-only journey still marks one. */
+    fastestTransferId,
+    /** True when the currently selected option IS the fastest one. */
+    selectedIsFastest:
+      selected != null && (selected.id === fastestId || selected.id === fastestTransferId),
     selectedRouteId: selected?.routeId ?? null,
     selectOption: (id) => {
       clearedRef.current = false

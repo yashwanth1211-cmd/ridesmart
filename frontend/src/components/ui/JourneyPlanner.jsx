@@ -15,6 +15,7 @@ import OptionCard, { TransferCard } from './OptionCard'
 import PredictionBadge from './PredictionBadge'
 import SourceBadge from './SourceBadge'
 import StopTimeline from './StopTimeline'
+import { JOURNEY_LEG_COLORS } from '@/lib/useJourney'
 import { useTripEtas } from '@/lib/useTripEtas'
 
 /**
@@ -104,7 +105,13 @@ function StopSelect({ label, value, stops, onChange, id }) {
         onChange={(event) => onChange(event.target.value)}
         className="h-10 w-full rounded-lg border border-white/10 bg-black/40 px-3 text-[13px] text-white focus:border-brand-blue focus:outline-none"
       >
-        {stops.length === 0 && <option value={value}>{value}</option>}
+        {/*
+          The pickers start EMPTY - the map stays empty until both are chosen -
+          so the first option is an explicit "pick one" entry rather than an
+          invisible blank. Re-selecting it clears the value, which clears the
+          plan, the selection and the map in one step.
+        */}
+        <option value="">{stops.length === 0 ? 'Loading stops…' : 'Pick a stop…'}</option>
         {stops.map((stop) => (
           <option key={stop.code} value={stop.code} className="bg-gray-900">
             {/* A campus anchor is a real place but not a surveyed bus bay, so
@@ -115,6 +122,98 @@ function StopSelect({ label, value, stops, onChange, id }) {
         ))}
       </select>
     </label>
+  )
+}
+
+/**
+ * The selected option's detail panel when that option is a TRANSFER.
+ *
+ * A transfer has no single ETA or crowd: it is two rides and a wait. The panel
+ * shows the total, the interchange and each leg on its own row - colour-coded
+ * to match the map - with its vehicle, its boarding time and its own stop
+ * timeline. Nothing here invents figures: a leg's crowd is only drawn when the
+ * backend supplied one.
+ */
+function TransferDetail({ option }) {
+  return (
+    <>
+      <header className="flex flex-col gap-1">
+        <span className="text-[11px] tracking-wide text-gray-400 uppercase">Selected</span>
+        <h2 className="text-[18px] font-medium text-white">
+          {option.code}
+          {option.via?.name && (
+            <span className="ml-2 text-[13px] font-normal text-gray-300">
+              change at {option.via.name}
+            </span>
+          )}
+        </h2>
+        <p className="text-[12px] text-gray-400">
+          {option.transfers} transfer{option.transfers === 1 ? '' : 's'} ·{' '}
+          {option.waitMin} min waiting between
+        </p>
+      </header>
+
+      <div className="glass-inset flex items-end justify-between gap-3 p-3">
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] tracking-wide text-gray-400 uppercase">
+            Arrives at the destination
+          </span>
+          <span className="text-3xl leading-none font-medium tracking-tight text-white">
+            {option.totalMin ?? '—'}
+            <span className="ml-1 text-[15px] font-normal text-gray-400">min</span>
+          </span>
+        </div>
+        <span className="text-[11px] text-gray-500">{option.waitMin} min waiting</span>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {option.legs.map((leg, i) => (
+          <section key={`${leg.routeId}-${i}`} className="glass-inset flex flex-col gap-2 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 text-[12px] font-medium text-white">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{
+                    background: JOURNEY_LEG_COLORS[i % JOURNEY_LEG_COLORS.length],
+                  }}
+                />
+                {leg.code}
+                {leg.direction && (
+                  <span className="text-[10px] font-normal text-gray-500">
+                    {leg.direction === 'up' ? 'up' : 'down'}
+                  </span>
+                )}
+              </span>
+              {leg.busName && (
+                <span className="text-[11px] text-gray-400">
+                  {leg.busName}
+                  {leg.busReg && (
+                    <span className="ml-1 text-[10px] text-gray-600">{leg.busReg}</span>
+                  )}
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="text-gray-500">
+                {leg.arrivesInMin === 0 ? 'bus at the stop' : `${leg.arrivesInMin} min to board`}
+              </span>
+              {leg.crowd ? (
+                <CrowdIndicator level={leg.crowd} load={leg.load} capacity={leg.capacity} compact />
+              ) : (
+                <span className="text-gray-500">crowding unknown until departure</span>
+              )}
+            </div>
+
+            <StopTimeline stops={leg.stops} />
+          </section>
+        ))}
+      </div>
+
+      <p className="text-[10px] text-gray-500">
+        Each leg is drawn on the map in its own colour — the change is where the two lines meet.
+      </p>
+    </>
   )
 }
 
@@ -139,6 +238,8 @@ export default function JourneyPlanner({
     transfers,
     message,
     selected,
+    fastestId,
+    fastestTransferId,
     selectOption,
     source,
     isLive,
@@ -182,7 +283,8 @@ export default function JourneyPlanner({
     )
   }
 
-  const sameStop = from === to
+  const bothSet = Boolean(from && to)
+  const sameStop = bothSet && from === to
 
   /**
    * What to say when the list is empty.
@@ -196,6 +298,12 @@ export default function JourneyPlanner({
    * sitting right below.
    */
   const emptyState = (() => {
+    if (!bothSet) {
+      return {
+        headline: 'Pick a From and a To stop to plan a journey.',
+        hint: 'The map stays empty until both ends of the trip are chosen.',
+      }
+    }
     if (message) {
       return {
         headline: message,
@@ -301,6 +409,7 @@ export default function JourneyPlanner({
                 <OptionCard
                   option={option}
                   rank={index + 1}
+                  fastest={fastestId === option.id}
                   selected={option.id === selected?.id}
                   onSelect={() => selectOption(option.id)}
                 />
@@ -308,7 +417,6 @@ export default function JourneyPlanner({
             ))}
 
             {/*
-
               One-transfer options, shown only when there is no direct bus. Not
               offered alongside a direct option: suggesting a change to someone
               who can simply take one bus is noise, and it buries the answer.
@@ -316,7 +424,12 @@ export default function JourneyPlanner({
             {options.length === 0 &&
               transfers.map((option) => (
                 <li key={option.id}>
-                  <TransferCard option={option} />
+                  <TransferCard
+                    option={option}
+                    fastest={fastestTransferId === option.id}
+                    selected={option.id === selected?.id}
+                    onSelect={() => selectOption(option.id)}
+                  />
                 </li>
               ))}
 
@@ -332,6 +445,9 @@ export default function JourneyPlanner({
         {/* ---- selected option detail ---- */}
         <section className="glass-panel flex min-h-0 flex-col gap-4 overflow-y-auto p-4 scroll-slim">
           {selected ? (
+            selected.legs ? (
+              <TransferDetail option={selected} />
+            ) : (
             <>
               <header className="flex flex-col gap-1">
                 <span className="text-[11px] tracking-wide text-gray-400 uppercase">Selected</span>
@@ -505,6 +621,7 @@ export default function JourneyPlanner({
                 )}
               </div>
             </>
+            )
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
               {loading ? (

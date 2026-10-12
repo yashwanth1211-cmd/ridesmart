@@ -24,7 +24,7 @@ export default function Intro() {
 
   useEffect(() => {
     if (!leaving) return
-    const timer = setTimeout(() => navigate('/app'), EXIT_MS)
+    const timer = setTimeout(() => navigate('/'), EXIT_MS)
     return () => clearTimeout(timer)
   }, [leaving, navigate])
 
